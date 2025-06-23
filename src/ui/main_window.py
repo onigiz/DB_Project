@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QTableWidget, QTableWidgetItem,
                              QFileDialog, QMessageBox, QMenuBar, QMenu, QStatusBar,
                              QDialog, QLineEdit, QComboBox, QSpinBox, QGroupBox)
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, Slot, Signal
 from PySide6.QtGui import QAction
 import os
 import pandas as pd
@@ -76,6 +76,9 @@ class SchemaDialog(QDialog):
         return schema
 
 class MainWindow(QMainWindow):
+    # Signal emitted when logout is requested
+    logout_requested = Signal()
+    
     def __init__(self, user_manager, data_manager, user_token, user_data):
         super().__init__()
         self.user_manager = user_manager
@@ -635,6 +638,7 @@ class MainWindow(QMainWindow):
     
     def handle_logout(self):
         """Handle user logout"""
+        self.logout_requested.emit()
         self.close()
         
     def show_change_password(self):
