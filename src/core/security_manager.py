@@ -202,11 +202,36 @@ class SecurityManager:
             decrypted_data = aesgcm.decrypt(nonce, encrypted_data, None)
             token_data = json.loads(decrypted_data.decode())
             
-            # Check expiry
-            expiry = datetime.fromisoformat(token_data["expires_at"])
-            if expiry < datetime.now(UTC):
+            # Validate token structure
+            required_fields = ["email", "role", "created_at", "expires_at"]
+            if not all(field in token_data for field in required_fields):
+                self._log_security_event(
+                    "TOKEN_ERROR",
+                    "Invalid token structure - missing required fields",
+                    "ERROR"
+                )
                 return None
-                
+            
+            # Check expiration
+            expires_at = datetime.fromisoformat(token_data["expires_at"])
+            if datetime.now(UTC) > expires_at:
+                self._log_security_event(
+                    "TOKEN_EXPIRED",
+                    f"Token expired at {expires_at}",
+                    "WARNING"
+                )
+                return None
+            
+            self._log_security_event(
+                "TOKEN_VERIFIED",
+                f"Token verified for user {token_data['email']}"
+            )
             return token_data
-        except Exception:
+            
+        except Exception as e:
+            self._log_security_event(
+                "TOKEN_ERROR",
+                f"Token verification failed: {str(e)}",
+                "ERROR"
+            )
             return None 

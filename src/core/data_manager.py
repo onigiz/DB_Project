@@ -49,14 +49,14 @@ class DataManager:
         token_data = self.security_manager.verify_session_token(token)
         if not token_data:
             return False
-        return token_data["role"] in ["admin", "moderator"]
+        return token_data["role"] in ["root", "admin", "moderator"]
     
     def _can_modify_schema(self, token: str) -> bool:
         """Check if user has permission to modify schema"""
         token_data = self.security_manager.verify_session_token(token)
         if not token_data:
             return False
-        return token_data["role"] == "admin"
+        return token_data["role"] in ["root", "admin"]
     
     def _load_schema(self) -> dict:
         """Load schema from encrypted file"""
@@ -289,7 +289,7 @@ class DataManager:
     def update_database_config(self, token: str, directory: str, new_password: str) -> Tuple[bool, str]:
         """Update database location and master password"""
         token_data = self.security_manager.verify_session_token(token)
-        if not token_data or token_data["role"] != "admin":
+        if not token_data or token_data["role"] not in ["root", "admin"]:
             return False, "Insufficient permissions"
             
         try:

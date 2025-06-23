@@ -93,6 +93,18 @@ def main():
         # Create and show main window
         global main_window
         main_window = MainWindow(user_manager, data_manager, token, user_data)
+        
+        # Handle logout signal
+        def handle_logout():
+            main_window.close()
+            # Clear login form
+            login_window.email_input.clear()
+            login_window.password_input.clear()
+            login_window.clear_error()
+            # Show login window again
+            login_window.show()
+        
+        main_window.logout_requested.connect(handle_logout)
         main_window.show()
         # Hide login window instead of letting it be destroyed
         login_window.hide()

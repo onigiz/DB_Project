@@ -1,83 +1,96 @@
 /* Global Styles */
 QWidget {
-    font-family: Arial;
+    font-family: "Segoe UI";
     font-size: 14px;
-    color: white;
-    background-color: #000028;
+    color: #ffffff;
+    background-color: #202020;
 }
 
 /* Main Window */
 QMainWindow {
-    background-color: #000028;
+    background-color: #202020;
 }
 
 /* Push Buttons */
 QPushButton {
-    background-color: #009999;
-    color: white;
+    background-color: #323232;
+    color: #ffffff;
     border: none;
     padding: 10px 20px;
-    border-radius: 5px;
+    border-radius: 4px;
     min-width: 100px;
     font-weight: 500;
 }
 
 QPushButton:hover {
-    background-color: #007777;
+    background-color: #404040;
 }
 
 QPushButton:pressed {
-    background-color: #006666;
+    background-color: #2b2b2b;
 }
 
 QPushButton:disabled {
-    background-color: #23233c;
-    color: #666666;
+    background-color: #2d2d2d;
+    color: #808080;
 }
 
 /* Line Edits */
 QLineEdit {
     padding: 10px;
-    border: 2px solid #23233c;
-    border-radius: 5px;
-    background-color: #23233c;
-    color: white;
+    border: 1px solid #404040;
+    border-radius: 4px;
+    background-color: #2d2d2d;
+    color: #ffffff;
 }
 
 QLineEdit:focus {
-    border: 2px solid #009999;
+    border: 1px solid #0078d4;
 }
 
 QLineEdit::placeholder {
-    color: #666666;
+    color: #808080;
 }
 
 /* Labels */
 QLabel {
-    color: white;
+    color: #ffffff;
+}
+
+/* Role Label */
+QLabel#roleLabel {
+    color: #0078d4;
+    font-weight: bold;
+    padding: 5px 10px;
+    border: 1px solid #0078d4;
+    border-radius: 3px;
+    margin: 2px 5px;
+    background-color: rgba(0, 120, 212, 0.1);
+    min-width: 150px;
+    min-height: 30px;
 }
 
 /* Error Labels */
 QLabel#errorLabel {
-    color: #ff6666;
+    color: #ff99a4;
     font-size: 14px;
 }
 
 /* Success Labels */
 QLabel#successLabel {
-    color: #00cc66;
+    color: #6ccb5f;
     font-size: 14px;
 }
 
 /* Warning Labels */
 QLabel#warningLabel {
-    color: #ff9966;
+    color: #ffd700;
     font-size: 14px;
 }
 
 /* Footer Label */
 QLabel#footerLabel {
-    color: #009999;
+    color: #0078d4;
     font-size: 12px;
 }
 
@@ -88,58 +101,62 @@ QLabel#logoLabel {
 
 /* Title Label */
 QLabel#titleLabel {
-    color: #009999;
+    color: #0078d4;
     font-size: 24px;
     font-weight: bold;
 }
 
 /* Form Container */
 QWidget#formContainer {
-    background-color: #23233c;
-    border-radius: 10px;
+    background-color: #2d2d2d;
+    border-radius: 8px;
 }
 
 /* Input Labels */
 QLabel#inputLabel {
-    color: #009999;
+    color: #0078d4;
     font-size: 14px;
     margin-bottom: 5px;
 }
 
 /* Table Widget */
 QTableWidget {
-    border: 1px solid #cccccc;
-    background-color: white;
-    alternate-background-color: #f8f8f8;
+    border: 1px solid #404040;
+    background-color: #2d2d2d;
+    alternate-background-color: #323232;
+    gridline-color: #404040;
 }
 
 QTableWidget::item {
     padding: 6px;
+    color: #ffffff;
 }
 
 QTableWidget::item:selected {
-    background-color: #e1effa;
-    color: black;
+    background-color: #0078d4;
+    color: #ffffff;
 }
 
 QHeaderView::section {
-    background-color: #f0f0f0;
+    background-color: #323232;
     padding: 8px;
     border: none;
-    border-right: 1px solid #cccccc;
-    border-bottom: 1px solid #cccccc;
+    border-right: 1px solid #404040;
+    border-bottom: 1px solid #404040;
+    color: #ffffff;
 }
 
 /* Group Box */
 QGroupBox {
-    border: 1px solid #cccccc;
+    border: 1px solid #404040;
     border-radius: 4px;
     margin-top: 12px;
     padding-top: 12px;
+    color: #ffffff;
 }
 
 QGroupBox::title {
-    color: #333333;
+    color: #ffffff;
     subcontrol-origin: margin;
     subcontrol-position: top left;
     left: 8px;
@@ -148,27 +165,29 @@ QGroupBox::title {
 
 /* Status Bar */
 QStatusBar {
-    background-color: #f0f0f0;
-    color: #666666;
+    background-color: #2d2d2d;
+    color: #ffffff;
 }
 
 /* Menu Bar */
 QMenuBar {
-    background-color: #f8f8f8;
-    border-bottom: 1px solid #cccccc;
+    background-color: #2d2d2d;
+    border-bottom: 1px solid #404040;
 }
 
 QMenuBar::item {
     padding: 8px 12px;
+    color: #ffffff;
 }
 
 QMenuBar::item:selected {
-    background-color: #e1effa;
+    background-color: #404040;
 }
 
 /* Message Box */
 QMessageBox {
-    background-color: white;
+    background-color: #202020;
+    color: #ffffff;
 }
 
 QMessageBox QPushButton {
