@@ -87,6 +87,7 @@ The initialization process creates several important configuration settings that
    - Must be strong and securely stored
    - Used for encrypting: schema, user data, and configuration files
    - Cannot be recovered if lost - all data will be inaccessible
+   - Must meet password complexity requirements
    - Recommendation: Use a password manager to generate and store this
 
 2. **Session Configuration**
@@ -94,12 +95,23 @@ The initialization process creates several important configuration settings that
    - Controls how long users can stay logged in
    - Can be modified in `.env` file after initialization
    - Shorter duration increases security, longer improves user experience
+   - Account lockout after 5 failed login attempts
+   - 15-minute lockout duration for security
 
 3. **Password Requirements**
    - `MIN_PASSWORD_LENGTH`: Default is 8 characters
+   - Must contain uppercase and lowercase letters
+   - Must contain numbers and special characters
    - Applied to both admin and user passwords
    - Can be strengthened by modifying `.env` file
    - Recommendation: Use at least 12 characters for production
+
+4. **Security Logging**
+   - All security events are logged with UTC timestamps
+   - Failed login attempts are tracked
+   - Account lockouts are recorded
+   - Encryption/decryption operations are monitored
+   - Logs are stored in the logs/ directory
 
 #### File Structure
 
@@ -455,8 +467,42 @@ DB_Project/
 - **Authentication**
   - Bcrypt password hashing
   - 24-hour session tokens
+  - Brute force protection with account lockout
+  - Strong password policy enforcement
   - Configurable role-based access control
   - Secure password reset mechanism
+
+- **Security Logging**
+  - Comprehensive security event logging
+  - Encryption/decryption operation tracking
+  - Failed login attempt monitoring
+  - Account lockout events
+  - Timezone-aware timestamps (UTC)
+
+### Session Management
+
+- **Session Security**
+  - 24-hour session duration
+  - Encrypted session tokens
+  - Automatic session expiration
+  - Secure token validation
+  - Account lockout after 5 failed attempts
+  - 15-minute lockout duration
+
+- **Account Protection**
+  - Failed login attempt tracking
+  - Automatic account unlocking
+  - Clear lockout duration display
+  - Secure session cleanup
+
+### Password Requirements
+
+- Minimum 8 characters length
+- At least one uppercase letter
+- At least one lowercase letter
+- At least one number
+- At least one special character
+- Password strength validation on creation and change
 
 ### Data Management
 
