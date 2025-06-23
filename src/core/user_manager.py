@@ -1,46 +1,89 @@
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional, List, Tuple
-from .security_manager import SecurityManager
+from core.security_manager import SecurityManager
+from pathlib import Path
+from dotenv import load_dotenv
 
 class UserManager:
     VALID_ROLES = ["admin", "moderator", "user"]  # Added moderator role
+    MAX_LOGIN_ATTEMPTS = 5
+    LOCKOUT_DURATION = 15  # minutes
     
-    def __init__(self, security_manager: SecurityManager, users_file: str = "users.enc"):
+    def __init__(self, security_manager: SecurityManager, users_file: Optional[str] = None):
         """Initialize UserManager with SecurityManager instance"""
+        # Load environment variables
+        load_dotenv()
+        
         self.security_manager = security_manager
-        self.users_file = users_file
-        self.master_password = os.getenv("MASTER_PASSWORD", "default_master_password")
+        
+        # Get required environment variables
+        self.users_file = users_file or self._get_required_env("USERS_FILE")
+        self.master_password = self._get_required_env("MASTER_PASSWORD")
+        
+        # Failed login attempts tracking
+        self.failed_attempts = {}  # {email: [timestamp, ...]}
+        self.account_lockouts = {}  # {email: lockout_end_time}
+        
+        # Ensure data directory exists
+        os.makedirs(os.path.dirname(self.users_file), exist_ok=True)
+        
         self._ensure_admin()
+    
+    def _get_required_env(self, var_name: str) -> str:
+        """Get required environment variable or raise error"""
+        value = os.getenv(var_name)
+        if value is None:
+            raise ValueError(f"Required environment variable {var_name} is not set. Please check your .env file.")
+        return value
     
     def _ensure_admin(self) -> None:
         """Ensure admin user exists"""
-        if not os.path.exists(self.users_file):
-            # Create default admin user
-            admin_data = {
-                "users": {
-                    "admin@company.com": {
-                        "password_hash": self.security_manager.hash_password("admin123").decode(),
-                        "role": "admin",
-                        "created_at": datetime.utcnow().isoformat(),
-                        "last_login": None
+        try:
+            if not os.path.exists(self.users_file):
+                # Get required admin credentials from environment
+                admin_email = self._get_required_env("ADMIN_EMAIL")
+                admin_password = self._get_required_env("ADMIN_PASSWORD")
+                
+                # Create admin user
+                admin_data = {
+                    "users": {
+                        admin_email: {
+                            "password_hash": self.security_manager.hash_password(admin_password).decode(),
+                            "role": "admin",
+                            "created_at": datetime.utcnow().isoformat(),
+                            "last_login": None
+                        }
                     }
                 }
-            }
-            # Encrypt and save
-            encrypted_data = self.security_manager.encrypt_file(admin_data, self.master_password)
-            with open(self.users_file, 'wb') as f:
-                f.write(encrypted_data)
+                
+                # Encrypt and save
+                encrypted_data = self.security_manager.encrypt_file(admin_data, self.master_password)
+                with open(self.users_file, 'wb') as f:
+                    f.write(encrypted_data)
+                
+                # Verify the data was written correctly
+                with open(self.users_file, 'rb') as f:
+                    test_data = f.read()
+                decrypted_data = self.security_manager.decrypt_file(test_data, self.master_password)
+                if decrypted_data != admin_data:
+                    raise ValueError("Admin data verification failed")
+                    
+        except Exception as e:
+            raise ValueError(f"Failed to create admin account: {str(e)}")
     
     def _load_users(self) -> dict:
         """Load users data from encrypted file"""
         try:
+            if not os.path.exists(self.users_file):
+                return {"users": {}}
+                
             with open(self.users_file, 'rb') as f:
                 encrypted_data = f.read()
             return self.security_manager.decrypt_file(encrypted_data, self.master_password)
-        except FileNotFoundError:
-            return {"users": {}}
+        except Exception as e:
+            raise ValueError(f"Failed to load users data: {str(e)}")
     
     def _save_users(self, users_data: dict) -> None:
         """Save users data to encrypted file"""
@@ -48,16 +91,66 @@ class UserManager:
         with open(self.users_file, 'wb') as f:
             f.write(encrypted_data)
     
+    def _check_account_lockout(self, email: str) -> Tuple[bool, Optional[datetime]]:
+        """Check if account is locked out"""
+        now = datetime.utcnow()
+        
+        # Clear old lockouts
+        self.account_lockouts = {
+            e: t for e, t in self.account_lockouts.items()
+            if t > now
+        }
+        
+        # Check if account is locked
+        if email in self.account_lockouts:
+            return True, self.account_lockouts[email]
+        
+        # Clear old failed attempts
+        if email in self.failed_attempts:
+            self.failed_attempts[email] = [
+                attempt for attempt in self.failed_attempts[email]
+                if (now - attempt).total_seconds() < self.LOCKOUT_DURATION * 60
+            ]
+            
+            # Check if too many recent failed attempts
+            if len(self.failed_attempts[email]) >= self.MAX_LOGIN_ATTEMPTS:
+                lockout_end = now + timedelta(minutes=self.LOCKOUT_DURATION)
+                self.account_lockouts[email] = lockout_end
+                return True, lockout_end
+        
+        return False, None
+
+    def _record_failed_attempt(self, email: str) -> None:
+        """Record a failed login attempt"""
+        now = datetime.utcnow()
+        if email not in self.failed_attempts:
+            self.failed_attempts[email] = []
+        self.failed_attempts[email].append(now)
+
     def authenticate_user(self, email: str, password: str) -> Optional[Tuple[str, dict]]:
         """Authenticate user and return session token if successful"""
+        # Check for account lockout
+        is_locked, lockout_end = self._check_account_lockout(email)
+        if is_locked and lockout_end:  # Add null check
+            remaining_minutes = int((lockout_end - datetime.utcnow()).total_seconds() / 60)
+            raise ValueError(f"Account is locked. Try again in {remaining_minutes} minutes.")
+        elif is_locked:  # Handle case where lockout_end is None
+            raise ValueError("Account is locked. Please try again later.")
+
         users_data = self._load_users()
         
         if email not in users_data["users"]:
+            self._record_failed_attempt(email)
             return None
         
         user_data = users_data["users"][email]
         if not self.security_manager.verify_password(password, user_data["password_hash"].encode()):
+            self._record_failed_attempt(email)
             return None
+        
+        # Successful login - clear failed attempts
+        if email in self.failed_attempts:
+            del self.failed_attempts[email]
         
         # Update last login
         user_data["last_login"] = datetime.utcnow().isoformat()

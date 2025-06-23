@@ -5,23 +5,141 @@ import shutil
 from getpass import getpass
 import json
 from pathlib import Path
+import stat
+from datetime import datetime
+from core.security_manager import SecurityManager
+from core.user_manager import UserManager
 
-def create_directory_structure():
-    """Create necessary directories"""
+def log_step(message: str) -> None:
+    """Print a step log message"""
+    print(f"\n[STEP] {message}")
+
+def log_info(message: str) -> None:
+    """Print an info log message"""
+    print(f"[INFO] {message}")
+
+def log_warning(message: str) -> None:
+    """Print a warning log message"""
+    print(f"[WARNING] {message}")
+
+def log_error(message: str) -> None:
+    """Print an error log message"""
+    print(f"[ERROR] {message}")
+
+def ensure_directory(directory):
+    """Create directory if it doesn't exist, clear it if it does"""
+    try:
+        log_info(f"Processing directory: {directory}")
+        
+        # If directory exists, try to remove it safely
+        if os.path.exists(directory):
+            log_info(f"Removing existing directory: {directory}")
+            try:
+                # First try to remove all files
+                for root, dirs, files in os.walk(directory, topdown=False):
+                    for name in files:
+                        try:
+                            file_path = os.path.join(root, name)
+                            if os.path.exists(file_path):
+                                os.chmod(file_path, 0o777)  # Give all permissions
+                                os.unlink(file_path)
+                                log_info(f"Removed file: {file_path}")
+                        except Exception as e:
+                            log_warning(f"Could not remove file {name}: {e}")
+                    
+                    # Then try to remove directories
+                    for name in dirs:
+                        try:
+                            dir_path = os.path.join(root, name)
+                            if os.path.exists(dir_path):
+                                os.chmod(dir_path, 0o777)  # Give all permissions
+                                os.rmdir(dir_path)
+                                log_info(f"Removed directory: {dir_path}")
+                        except Exception as e:
+                            log_warning(f"Could not remove directory {name}: {e}")
+                
+                # Finally remove the root directory
+                if os.path.exists(directory):
+                    os.chmod(directory, 0o777)  # Give all permissions
+                    os.rmdir(directory)
+                    log_info(f"Removed root directory: {directory}")
+            except Exception as e:
+                log_warning(f"Could not fully remove directory {directory}: {e}")
+                # If we can't remove it, try to clean its contents
+                try:
+                    for item in os.listdir(directory):
+                        item_path = os.path.join(directory, item)
+                        try:
+                            if os.path.isfile(item_path):
+                                os.chmod(item_path, 0o777)
+                                os.unlink(item_path)
+                                log_info(f"Removed file: {item_path}")
+                            elif os.path.isdir(item_path):
+                                shutil.rmtree(item_path, ignore_errors=True)
+                                log_info(f"Removed subdirectory: {item_path}")
+                        except Exception as sub_e:
+                            log_warning(f"Could not remove {item_path}: {sub_e}")
+                except Exception as clean_e:
+                    log_warning(f"Could not clean directory contents: {clean_e}")
+        
+        # Create fresh directory
+        log_info(f"Creating directory: {directory}")
+        os.makedirs(directory, exist_ok=True)
+        
+        # Verify directory exists
+        if os.path.exists(directory):
+            log_info(f"Directory ready: {directory}")
+            return True
+        else:
+            log_error(f"Failed to create directory: {directory}")
+            return False
+            
+    except Exception as e:
+        log_error(f"Error handling directory {directory}: {e}")
+        return False
+
+def clean_and_create_directory_structure():
+    """Clean and create directory structure"""
+    log_step("Preparing directory structure")
+    
+    # Process directories in order
     directories = [
         'data',
         'logs',
         'resources/company'
     ]
     
+    # First ensure parent directories exist
     for directory in directories:
-        Path(directory).mkdir(parents=True, exist_ok=True)
-        print(f"Created directory: {directory}")
+        parent = os.path.dirname(directory)
+        if parent and not os.path.exists(parent):
+            log_info(f"Creating parent directory: {parent}")
+            os.makedirs(parent, exist_ok=True)
+    
+    # Then process each directory
+    for directory in directories:
+        if not ensure_directory(directory):
+            raise Exception(f"Failed to prepare directory: {directory}")
+        else:
+            # Double check directory is usable
+            try:
+                # Try to create a test file
+                test_file = os.path.join(directory, 'test.tmp')
+                with open(test_file, 'w') as f:
+                    f.write('test')
+                os.unlink(test_file)
+                log_info(f"Verified directory is writable: {directory}")
+            except Exception as e:
+                log_error(f"Directory is not writable: {directory}")
+                raise Exception(f"Directory {directory} is not writable: {e}")
 
-def create_env_file(company_name, admin_email):
+def create_env_file(company_name: str, admin_email: str, admin_password: str, 
+                   master_password: str, support_email: str, copyright_year: str) -> None:
     """Create .env file with initial configuration"""
+    log_step("Creating .env file")
+    
     env_content = f"""# Database Configuration
-MASTER_PASSWORD={getpass('Enter master password for database encryption: ')}
+MASTER_PASSWORD={master_password}
 
 # Security Settings
 SESSION_DURATION_HOURS=24
@@ -36,62 +154,204 @@ CONFIG_FILE=data/db_config.enc
 
 # Company Information
 COMPANY_NAME={company_name}
-COPYRIGHT_YEAR={input('Enter copyright year: ')}
-SUPPORT_EMAIL={input('Enter support email: ')}
+COPYRIGHT_YEAR={copyright_year}
+SUPPORT_EMAIL={support_email}
 
-# Initial Admin Account
+# Admin Account
 ADMIN_EMAIL={admin_email}
-ADMIN_PASSWORD={getpass('Enter admin password: ')}
+ADMIN_PASSWORD={admin_password}
 """
-    with open('.env', 'w') as f:
-        f.write(env_content)
-    print("Created .env file with initial configuration")
+    try:
+        # Remove existing .env file if it exists
+        if os.path.exists('.env'):
+            log_info("Removing existing .env file")
+            os.remove('.env')
+        
+        # Create new .env file
+        log_info("Creating new .env file")
+        with open('.env', 'w') as f:
+            f.write(env_content)
+        
+        # Verify file was created
+        if os.path.exists('.env'):
+            log_info("Created and verified .env file")
+        else:
+            log_error(".env file was not created")
+            raise Exception(".env file creation failed")
+    except Exception as e:
+        log_error(f"Error creating .env file: {e}")
+        raise
 
 def setup_resources():
-    """Guide through resource setup"""
+    """Setup resources"""
+    log_step("Setting up resources")
+    
     print("\nResource Setup:")
     print("1. Please place your company logo (PNG format) in resources/company/logo.png")
     print("2. Please place your company icon (ICO format) in resources/company/icon.ico")
     
-    # Copy dummy resources if company resources don't exist
-    if not os.path.exists('resources/company/logo.png'):
-        shutil.copy('resources/dummy-logo.png', 'resources/company/logo.png')
-        print("Copied dummy logo - please replace with company logo")
+    # Copy dummy resources
+    resource_files = {
+        'resources/dummy-logo.png': 'resources/company/logo.png',
+        'resources/dummy-logo.ico': 'resources/company/icon.ico'
+    }
     
-    if not os.path.exists('resources/company/icon.ico'):
-        shutil.copy('resources/dummy-logo.ico', 'resources/company/icon.ico')
-        print("Copied dummy icon - please replace with company icon")
+    for src, dest in resource_files.items():
+        try:
+            if not os.path.exists(dest):
+                shutil.copy2(src, dest)
+                log_info(f"Copied resource: {src} -> {dest}")
+            else:
+                log_info(f"Resource already exists: {dest}")
+        except Exception as e:
+            log_warning(f"Could not copy resource {src}: {e}")
+
+def validate_email(email: str) -> bool:
+    """Basic email validation"""
+    import re
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email))
+
+def validate_password(password: str) -> bool:
+    """Basic password validation"""
+    if len(password) < 8:
+        print("Password must be at least 8 characters long")
+        return False
+    if not any(c.isupper() for c in password):
+        print("Password must contain at least one uppercase letter")
+        return False
+    if not any(c.islower() for c in password):
+        print("Password must contain at least one lowercase letter")
+        return False
+    if not any(c.isdigit() for c in password):
+        print("Password must contain at least one number")
+        return False
+    return True
+
+def get_validated_input(prompt: str, validation_func=None, is_password: bool = False) -> str:
+    """Get and validate user input"""
+    while True:
+        if is_password:
+            value = getpass(prompt)
+        else:
+            value = input(prompt)
+        
+        if validation_func is None or validation_func(value):
+            return value
+        print("Invalid input. Please try again.")
+
+def initialize_user_database(admin_email: str, admin_password: str, master_password: str) -> None:
+    """Initialize the user database with admin account"""
+    log_step("Initializing user database")
+    
+    try:
+        # Ensure data directory exists
+        if not os.path.exists('data'):
+            log_warning("Data directory missing, creating it")
+            os.makedirs('data', exist_ok=True)
+        
+        # Remove existing salt and users files if they exist
+        salt_file = "data/salt.key"
+        users_file = "data/users.enc"
+        
+        for file in [salt_file, users_file]:
+            if os.path.exists(file):
+                log_info(f"Removing existing file: {file}")
+                os.remove(file)
+                log_info(f"Successfully removed: {file}")
+        
+        # Create security manager with correct salt file path
+        log_info(f"Creating SecurityManager with salt file: {salt_file}")
+        security_manager = SecurityManager(salt_file=salt_file)
+        
+        # Create initial admin user data
+        log_info(f"Creating admin account for: {admin_email}")
+        admin_data = {
+            "users": {
+                admin_email: {
+                    "password_hash": security_manager.hash_password(admin_password).decode(),
+                    "role": "admin",
+                    "created_at": datetime.utcnow().isoformat(),
+                    "last_login": None
+                }
+            }
+        }
+        
+        # Encrypt and save admin data
+        log_info(f"Encrypting user data with master password")
+        encrypted_data = security_manager.encrypt_file(admin_data, master_password)
+        
+        log_info(f"Writing encrypted data to: {users_file}")
+        with open(users_file, 'wb') as f:
+            f.write(encrypted_data)
+        
+        # Verify the data was written correctly
+        log_info("Verifying written data")
+        try:
+            with open(users_file, 'rb') as f:
+                test_data = f.read()
+            log_info("Testing decryption of written data")
+            decrypted_data = security_manager.decrypt_file(test_data, master_password)
+            if decrypted_data == admin_data:
+                log_info("Data verification successful")
+            else:
+                log_error("Data verification failed - content mismatch")
+                raise ValueError("Data verification failed - content mismatch")
+        except Exception as e:
+            log_error(f"Data verification failed: {str(e)}")
+            raise ValueError(f"Failed to verify written data: {str(e)}")
+            
+    except Exception as e:
+        log_error(f"Failed to initialize user database: {str(e)}")
+        raise Exception(f"Failed to initialize user database: {str(e)}")
 
 def main():
     print("=== Database Project Initialization ===")
     
-    # Get company information
-    company_name = input("Enter company name: ")
-    admin_email = input("Enter admin email: ")
-    
-    # Create directory structure
-    create_directory_structure()
-    
-    # Create .env file
-    create_env_file(company_name, admin_email)
-    
-    # Setup resources
-    setup_resources()
-    
-    print("\nInitialization Complete!")
-    print("\nNext steps:")
-    print("1. Replace dummy logo and icon in resources/company/ with your company's assets")
-    print("2. Review and adjust settings in .env file if needed")
-    print("3. Run 'python src/main.py' to start the application")
-    print("4. Log in with the admin credentials you provided")
-    print("5. Set up the database schema and additional users through the admin interface")
+    try:
+        # Get company and admin information with validation
+        log_step("Collecting initialization information")
+        company_name = get_validated_input("Enter company name: ")
+        admin_email = get_validated_input("Enter admin email: ", validate_email)
+        admin_password = get_validated_input("Enter admin password: ", validate_password, True)
+        master_password = get_validated_input("Enter master password for database encryption: ", validate_password, True)
+        copyright_year = get_validated_input("Enter copyright year: ")
+        support_email = get_validated_input("Enter support email: ", validate_email)
+        
+        # Clean and create directory structure
+        clean_and_create_directory_structure()
+        
+        # Create .env file with all required variables
+        create_env_file(
+            company_name=company_name,
+            admin_email=admin_email,
+            admin_password=admin_password,
+            master_password=master_password,
+            support_email=support_email,
+            copyright_year=copyright_year
+        )
+        
+        # Initialize user database with admin account
+        initialize_user_database(admin_email, admin_password, master_password)
+        
+        # Setup resources
+        setup_resources()
+        
+        log_step("Initialization Complete!")
+        print("\nNext steps:")
+        print("1. Replace dummy logo and icon in resources/company/ with your company's assets")
+        print("2. Review settings in .env file if needed")
+        print("3. Run 'python src/main.py' to start the application")
+        print("4. Log in with the admin credentials you provided")
+        print("5. Set up the database schema and additional users through the admin interface")
+        
+    except Exception as e:
+        log_error(f"Initialization failed: {str(e)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         print("\nInitialization cancelled.")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\nError during initialization: {e}")
         sys.exit(1) 

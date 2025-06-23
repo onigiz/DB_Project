@@ -1,6 +1,8 @@
 import os
 import json
 import bcrypt
+import re
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 from cryptography.fernet import Fernet
@@ -10,49 +12,121 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from base64 import b64encode, b64decode
 
 class SecurityManager:
-    def __init__(self, salt_file: str = "salt.key"):
+    def __init__(self, salt_file: str = "salt.key", log_file: str = "security.log"):
         """Initialize SecurityManager with a salt file for key derivation"""
         self.salt_file = salt_file
+        self._setup_logging(log_file)
         self._ensure_salt()
+        # Load and store salt at initialization
+        self._salt = self._load_salt()
+        
+    def _setup_logging(self, log_file: str) -> None:
+        """Setup security event logging"""
+        log_dir = os.path.dirname(log_file)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+            
+        # Configure logging
+        self.logger = logging.getLogger('security_manager')
+        self.logger.setLevel(logging.INFO)
+        
+        # Create file handler
+        handler = logging.FileHandler(log_file)
+        handler.setLevel(logging.INFO)
+        
+        # Create formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        handler.setFormatter(formatter)
+        
+        # Add handler to logger
+        self.logger.addHandler(handler)
+        
+    def _log_security_event(self, event_type: str, details: str, level: str = "INFO") -> None:
+        """Log security event"""
+        log_method = getattr(self.logger, level.lower())
+        log_method(f"{event_type}: {details}")
+
+    def validate_password_strength(self, password: str) -> Tuple[bool, str]:
+        """
+        Validate password strength
+        Returns: (is_valid: bool, message: str)
+        """
+        if len(password) < 8:
+            return False, "Password must be at least 8 characters long"
+            
+        if not re.search(r"[A-Z]", password):
+            return False, "Password must contain at least one uppercase letter"
+            
+        if not re.search(r"[a-z]", password):
+            return False, "Password must contain at least one lowercase letter"
+            
+        if not re.search(r"\d", password):
+            return False, "Password must contain at least one number"
+            
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
+            return False, "Password must contain at least one special character"
+            
+        return True, "Password meets complexity requirements"
         
     def _ensure_salt(self) -> None:
         """Ensure salt file exists or create it"""
+        os.makedirs(os.path.dirname(self.salt_file), exist_ok=True)
         if not os.path.exists(self.salt_file):
             with open(self.salt_file, 'wb') as f:
                 f.write(os.urandom(32))  # 32 bytes salt for PBKDF2
     
-    def _get_salt(self) -> bytes:
-        """Read salt from file"""
-        with open(self.salt_file, 'rb') as f:
-            return f.read()
+    def _load_salt(self) -> bytes:
+        """Load or create salt"""
+        try:
+            with open(self.salt_file, 'rb') as f:
+                salt = f.read()
+                if len(salt) != 32:  # Validate salt length
+                    salt = os.urandom(32)
+                    with open(self.salt_file, 'wb') as f:
+                        f.write(salt)
+                return salt
+        except Exception:
+            # If any error occurs, create new salt
+            salt = os.urandom(32)
+            with open(self.salt_file, 'wb') as f:
+                f.write(salt)
+            return salt
     
     def _derive_key(self, password: str) -> bytes:
         """Derive encryption key from password using PBKDF2"""
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=self._get_salt(),
+            salt=self._salt,  # Use stored salt
             iterations=100000,
         )
         return kdf.derive(password.encode())
     
     def encrypt_file(self, data: dict, password: str) -> bytes:
         """Encrypt data with password"""
-        # Convert data to JSON string
-        json_data = json.dumps(data).encode()
-        
-        # Derive key and create AESGCM instance
-        key = self._derive_key(password)
-        aesgcm = AESGCM(key)
-        
-        # Generate nonce
-        nonce = os.urandom(12)
-        
-        # Encrypt data
-        encrypted_data = aesgcm.encrypt(nonce, json_data, None)
-        
-        # Combine nonce and encrypted data
-        return b64encode(nonce + encrypted_data)
+        try:
+            # Convert data to JSON string
+            json_data = json.dumps(data).encode()
+            
+            # Derive key and create AESGCM instance
+            key = self._derive_key(password)
+            aesgcm = AESGCM(key)
+            
+            # Generate nonce
+            nonce = os.urandom(12)
+            
+            # Encrypt data
+            encrypted_data = aesgcm.encrypt(nonce, json_data, None)
+            
+            # Combine nonce and encrypted data
+            self._log_security_event("ENCRYPTION", "File encryption successful")
+            return b64encode(nonce + encrypted_data)
+        except Exception as e:
+            self._log_security_event("ENCRYPTION_ERROR", str(e), "ERROR")
+            raise ValueError(f"Encryption failed: {str(e)}")
     
     def decrypt_file(self, encrypted_data: bytes, password: str) -> dict:
         """Decrypt data with password"""
@@ -72,9 +146,11 @@ class SecurityManager:
             decrypted_data = aesgcm.decrypt(nonce, ciphertext, None)
             
             # Parse JSON
+            self._log_security_event("DECRYPTION", "File decryption successful")
             return json.loads(decrypted_data.decode())
         except Exception as e:
-            raise ValueError("Decryption failed. Invalid password or corrupted data.") from e
+            self._log_security_event("DECRYPTION_ERROR", str(e), "ERROR")
+            raise ValueError(f"Decryption failed. Invalid password or corrupted data: {str(e)}")
     
     def hash_password(self, password: str) -> bytes:
         """Hash password using bcrypt"""
