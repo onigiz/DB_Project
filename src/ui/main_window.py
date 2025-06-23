@@ -8,6 +8,7 @@ from PySide6.QtGui import QAction, QIcon, QWindow, QColor
 import os
 import pandas as pd
 from datetime import datetime
+import json
 
 # Add Qt constants
 from PySide6.QtCore import Qt
@@ -443,6 +444,22 @@ class MainWindow(QMainWindow):
         
         main_layout = QVBoxLayout(dialog)
         
+        # Add menu bar
+        menu_bar = QMenuBar()
+        main_layout.setMenuBar(menu_bar)
+        
+        # Add Export menu
+        export_menu = menu_bar.addMenu('Export Data')
+        
+        # Export actions
+        export_excel_action = QAction('Export to Excel', dialog)
+        export_csv_action = QAction('Export to CSV', dialog)
+        export_json_action = QAction('Export to JSON', dialog)
+        
+        export_menu.addAction(export_excel_action)
+        export_menu.addAction(export_csv_action)
+        export_menu.addAction(export_json_action)
+
         # Add filter section
         filter_layout = QHBoxLayout()
         
@@ -816,6 +833,62 @@ class MainWindow(QMainWindow):
             cancel.clicked.connect(reset_dialog.reject)
             
             reset_dialog.exec()
+        
+        def export_data(export_type):
+            """Export user table data to specified format"""
+            try:
+                # Get all data from the table
+                data = []
+                for row in range(user_table.rowCount()):
+                    row_data = {
+                        'Email': user_table.item(row, 0).text(),
+                        'Account Type': user_table.item(row, 1).text(),
+                        'Created': user_table.item(row, 3).text(),
+                        'Last Login': user_table.item(row, 4).text()
+                    }
+                    data.append(row_data)
+                
+                # Create DataFrame
+                df = pd.DataFrame(data)
+                
+                # Get file path from user
+                file_filters = {
+                    'excel': "Excel Files (*.xlsx)",
+                    'csv': "CSV Files (*.csv)",
+                    'json': "JSON Files (*.json)"
+                }
+                
+                file_path, _ = QFileDialog.getSaveFileName(
+                    dialog,
+                    f"Export as {export_type.upper()}",
+                    "",
+                    file_filters[export_type]
+                )
+                
+                if file_path:
+                    if export_type == 'excel':
+                        df.to_excel(file_path, index=False)
+                    elif export_type == 'csv':
+                        df.to_csv(file_path, index=False)
+                    elif export_type == 'json':
+                        df.to_json(file_path, orient='records', indent=2)
+                    
+                    QMessageBox.information(
+                        dialog,
+                        "Success",
+                        f"Data exported successfully to {file_path}"
+                    )
+            except Exception as e:
+                QMessageBox.warning(
+                    dialog,
+                    "Export Error",
+                    f"Failed to export data: {str(e)}"
+                )
+        
+        # Connect export actions
+        export_excel_action.triggered.connect(lambda: export_data('excel'))
+        export_csv_action.triggered.connect(lambda: export_data('csv'))
+        export_json_action.triggered.connect(lambda: export_data('json'))
         
         add_user.clicked.connect(handle_add_user)
         delete_user.clicked.connect(handle_delete_user)
