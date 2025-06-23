@@ -1,0 +1,176 @@
+/* Global Styles */
+QWidget {
+    font-family: Arial;
+    font-size: 14px;
+    color: white;
+    background-color: #000028;
+}
+
+/* Main Window */
+QMainWindow {
+    background-color: #000028;
+}
+
+/* Push Buttons */
+QPushButton {
+    background-color: #009999;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    min-width: 100px;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background-color: #007777;
+}
+
+QPushButton:pressed {
+    background-color: #006666;
+}
+
+QPushButton:disabled {
+    background-color: #23233c;
+    color: #666666;
+}
+
+/* Line Edits */
+QLineEdit {
+    padding: 10px;
+    border: 2px solid #23233c;
+    border-radius: 5px;
+    background-color: #23233c;
+    color: white;
+}
+
+QLineEdit:focus {
+    border: 2px solid #009999;
+}
+
+QLineEdit::placeholder {
+    color: #666666;
+}
+
+/* Labels */
+QLabel {
+    color: white;
+}
+
+/* Error Labels */
+QLabel#errorLabel {
+    color: #ff6666;
+    font-size: 14px;
+}
+
+/* Success Labels */
+QLabel#successLabel {
+    color: #00cc66;
+    font-size: 14px;
+}
+
+/* Warning Labels */
+QLabel#warningLabel {
+    color: #ff9966;
+    font-size: 14px;
+}
+
+/* Footer Label */
+QLabel#footerLabel {
+    color: #009999;
+    font-size: 12px;
+}
+
+/* Logo Label */
+QLabel#logoLabel {
+    padding: 20px;
+}
+
+/* Title Label */
+QLabel#titleLabel {
+    color: #009999;
+    font-size: 24px;
+    font-weight: bold;
+}
+
+/* Form Container */
+QWidget#formContainer {
+    background-color: #23233c;
+    border-radius: 10px;
+}
+
+/* Input Labels */
+QLabel#inputLabel {
+    color: #009999;
+    font-size: 14px;
+    margin-bottom: 5px;
+}
+
+/* Table Widget */
+QTableWidget {
+    border: 1px solid #cccccc;
+    background-color: white;
+    alternate-background-color: #f8f8f8;
+}
+
+QTableWidget::item {
+    padding: 6px;
+}
+
+QTableWidget::item:selected {
+    background-color: #e1effa;
+    color: black;
+}
+
+QHeaderView::section {
+    background-color: #f0f0f0;
+    padding: 8px;
+    border: none;
+    border-right: 1px solid #cccccc;
+    border-bottom: 1px solid #cccccc;
+}
+
+/* Group Box */
+QGroupBox {
+    border: 1px solid #cccccc;
+    border-radius: 4px;
+    margin-top: 12px;
+    padding-top: 12px;
+}
+
+QGroupBox::title {
+    color: #333333;
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 8px;
+    padding: 0 3px;
+}
+
+/* Status Bar */
+QStatusBar {
+    background-color: #f0f0f0;
+    color: #666666;
+}
+
+/* Menu Bar */
+QMenuBar {
+    background-color: #f8f8f8;
+    border-bottom: 1px solid #cccccc;
+}
+
+QMenuBar::item {
+    padding: 8px 12px;
+}
+
+QMenuBar::item:selected {
+    background-color: #e1effa;
+}
+
+/* Message Box */
+QMessageBox {
+    background-color: white;
+}
+
+QMessageBox QPushButton {
+    min-width: 100px;
+} 
