@@ -271,26 +271,20 @@ class UserManager:
             
         users_data = self._load_users()
         
-        # If admin, filter out root and admin users
-        if token_data["role"] == "admin":
-            return [
-                {
-                    "email": email,
-                    "role": data["role"],
-                    "created_at": data["created_at"],
-                    "last_login": data["last_login"]
-                }
-                for email, data in users_data["users"].items()
-                if data["role"] not in ["root", "admin"]
-            ]
-        
-        # If root, show all users
+        # Both root and admin can see all users
         return [
             {
                 "email": email,
                 "role": data["role"],
                 "created_at": data["created_at"],
-                "last_login": data["last_login"]
+                "last_login": data["last_login"],
+                # Add flag to indicate if the user can be modified by current user
+                "can_modify": (
+                    token_data["role"] == "root" and not data.get("is_root", False)
+                ) or (
+                    token_data["role"] == "admin" and 
+                    data["role"] not in ["root", "admin"]
+                )
             }
             for email, data in users_data["users"].items()
         ]
@@ -324,6 +318,51 @@ class UserManager:
             return False
         
         del users_data["users"][user_email]
+        self._save_users(users_data)
+        
+        return True
+
+    def change_user_role(self, admin_token: str, user_email: str, new_role: str) -> bool:
+        """Change user role (requires admin/root token)"""
+        # Verify admin/root token
+        token_data = self.security_manager.verify_session_token(admin_token)
+        if not token_data:
+            return False
+            
+        # Get token role
+        token_role = token_data["role"]
+        
+        # Validate new role
+        if new_role not in self.VALID_ROLES:
+            return False
+            
+        users_data = self._load_users()
+        if user_email not in users_data["users"]:
+            return False
+            
+        target_user = users_data["users"][user_email]
+        
+        # Cannot modify root user
+        if target_user.get("is_root", False):
+            return False
+            
+        # Root can change any role except root users
+        if token_role == "root":
+            if target_user["role"] == "root":
+                return False
+        # Admin can only modify moderator and user roles
+        elif token_role == "admin":
+            if target_user["role"] in ["root", "admin"] or new_role in ["root", "admin"]:
+                return False
+        else:
+            return False
+        
+        # Update role
+        target_user["role"] = new_role
+        target_user["modified_at"] = datetime.now(UTC).isoformat()
+        target_user["modified_by"] = token_data["email"]
+        
+        users_data["users"][user_email] = target_user
         self._save_users(users_data)
         
         return True 

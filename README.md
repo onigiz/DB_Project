@@ -573,23 +573,103 @@ DB_Project/
    - Set up user roles
    - Implement custom features
 
-## User Roles (Customizable)
+## User Roles and Management
 
-1. **Admin**
+### Role Hierarchy
+
+1. **Root**
    - Full system access
-   - User management
+   - Can create/modify/delete any users (except other root users)
+   - Can create admin, moderator, and user roles
    - Schema definition
    - Database configuration
    - Data management
+   - Cannot be deleted or modified by other users
 
-2. **Moderator**
+2. **Admin**
+   - User management (limited)
+     - Can create/modify/delete moderator and user roles only
+     - Cannot modify root or other admin users
+   - Schema definition
+   - Database configuration
+   - Data management
+   - Full data access
+
+3. **Moderator**
    - Data import capabilities
    - Record management
    - Data viewing
+   - Limited user management access
 
-3. **User**
+4. **User**
    - Data viewing
    - Password management
+   - Limited system access
+
+### User Management Features
+
+1. **User Interface**
+   - Modern, filterable user management table
+   - Role-specific color coding:
+     * Root: Blue (#0078d4)
+     * Admin: Green (#28a745)
+     * Moderator: Yellow (#ffc107)
+     * User: Purple (#6f42c1)
+   - Visual indicators for non-modifiable users (red text)
+   - Fullscreen capability
+
+2. **Search and Filtering**
+   - Email search filter
+   - Role-based filtering
+   - Date range filter for user creation date
+   - Column sorting
+   - Clear filters option
+
+3. **User Operations**
+   - Add new users with role assignment
+   - Delete users (with role-based restrictions)
+   - Reset user passwords
+   - Change user roles
+   - View user creation date and last login
+
+4. **Security Features**
+   - Account lockout after 5 failed login attempts
+   - 15-minute lockout duration
+   - Secure password reset mechanism
+   - Role-based access control
+   - Session-based authentication
+   - Password complexity requirements
+
+5. **Audit Trail**
+   - User creation tracking
+   - Last login timestamps
+   - Role modification history
+   - Creation and modification attribution
+
+### Password Management
+
+1. **Password Requirements**
+   - Minimum 8 characters length
+   - At least one uppercase letter
+   - At least one lowercase letter
+   - At least one number
+   - At least one special character
+   - Password strength validation
+
+2. **Password Operations**
+   - Self-service password change
+   - Admin/Root password reset capability
+   - Secure password hashing using bcrypt
+   - Password confirmation for changes
+
+### Session Management
+
+- 24-hour session duration
+- Encrypted session tokens
+- Automatic session expiration
+- Secure token validation
+- Account lockout protection
+- Clear lockout duration display
 
 ## Dependencies
 

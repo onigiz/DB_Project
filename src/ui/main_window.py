@@ -1,9 +1,10 @@
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QTableWidget, QTableWidgetItem,
                              QFileDialog, QMessageBox, QMenuBar, QMenu, QStatusBar,
-                             QDialog, QLineEdit, QComboBox, QSpinBox, QGroupBox)
-from PySide6.QtCore import Qt, Slot, Signal, QSize
-from PySide6.QtGui import QAction, QIcon, QWindow
+                             QDialog, QLineEdit, QComboBox, QSpinBox, QGroupBox,
+                             QHeaderView, QDateEdit)
+from PySide6.QtCore import Qt, Slot, Signal, QSize, QDate
+from PySide6.QtGui import QAction, QIcon, QWindow, QColor
 import os
 import pandas as pd
 from datetime import datetime
@@ -432,25 +433,201 @@ class MainWindow(QMainWindow):
         dialog = QDialog(self)
         dialog.setWindowTitle("User Management")
         dialog.setModal(True)
-        dialog.resize(600, 400)
+        dialog.resize(800, 600)  # Default size
         
-        layout = QVBoxLayout(dialog)
+        # Add maximize/fullscreen button
+        dialog.setWindowFlags(
+            dialog.windowFlags() |
+            Qt.WindowType.WindowMaximizeButtonHint
+        )
+        
+        main_layout = QVBoxLayout(dialog)
+        
+        # Add filter section
+        filter_layout = QHBoxLayout()
+        
+        # Email filter
+        email_filter = QLineEdit()
+        email_filter.setPlaceholderText("Filter by Email...")
+        filter_layout.addWidget(email_filter)
+        
+        # Role filter
+        role_filter = QComboBox()
+        role_filter.addItems(["All Roles", "root", "admin", "moderator", "user"])
+        filter_layout.addWidget(role_filter)
+        
+        # Date range filter for Created
+        date_filter_layout = QHBoxLayout()
+        date_from = QDateEdit()
+        date_from.setCalendarPopup(True)
+        date_to = QDateEdit()
+        date_to.setCalendarPopup(True)
+        date_from.setDate(QDate.currentDate().addYears(-1))  # Default to last year
+        date_to.setDate(QDate.currentDate())  # Default to today
+        
+        date_filter_layout.addWidget(QLabel("Created From:"))
+        date_filter_layout.addWidget(date_from)
+        date_filter_layout.addWidget(QLabel("To:"))
+        date_filter_layout.addWidget(date_to)
+        filter_layout.addLayout(date_filter_layout)
+        
+        # Clear filters button
+        clear_filters = QPushButton("Clear Filters")
+        filter_layout.addWidget(clear_filters)
+        
+        main_layout.addLayout(filter_layout)
         
         # User table
         user_table = QTableWidget()
-        user_table.setColumnCount(4)
-        user_table.setHorizontalHeaderLabels(["Email", "Role", "Created", "Last Login"])
-        layout.addWidget(user_table)
+        user_table.setColumnCount(5)
+        user_table.setHorizontalHeaderLabels([
+            "Email",
+            "Account Type: Current Type",
+            "Change Account Type",
+            "Created",
+            "Last Login"
+        ])
+        user_table.setSortingEnabled(True)  # Enable sorting
         
-        # Load users
+        # Load users first to calculate column widths
         users = self.user_manager.get_users(self.user_token)
-        if users:
-            user_table.setRowCount(len(users))
-            for row, user in enumerate(users):
-                user_table.setItem(row, 0, QTableWidgetItem(user["email"]))
-                user_table.setItem(row, 1, QTableWidgetItem(user["role"]))
-                user_table.setItem(row, 2, QTableWidgetItem(user["created_at"]))
-                user_table.setItem(row, 3, QTableWidgetItem(user["last_login"] or "Never"))
+        all_users = users.copy() if users else []  # Keep a copy of all users for filtering
+        
+        def apply_filters():
+            if not all_users:
+                return
+                
+            filtered_users = all_users.copy()
+            
+            # Apply email filter
+            if email_filter.text():
+                filtered_users = [
+                    user for user in filtered_users
+                    if email_filter.text().lower() in user["email"].lower()
+                ]
+            
+            # Apply role filter
+            if role_filter.currentText() != "All Roles":
+                filtered_users = [
+                    user for user in filtered_users
+                    if user["role"] == role_filter.currentText()
+                ]
+            
+            # Apply date filter
+            from_date = date_from.date().toPython()
+            to_date = date_to.date().toPython()
+            filtered_users = [
+                user for user in filtered_users
+                if from_date <= datetime.fromisoformat(user["created_at"]).date() <= to_date
+            ]
+            
+            # Update table with filtered users
+            user_table.setRowCount(len(filtered_users))
+            for row, user in enumerate(filtered_users):
+                # Email
+                email_item = QTableWidgetItem(user["email"])
+                if not user.get("can_modify", False):
+                    email_item.setForeground(QColor("#FF0000"))
+                user_table.setItem(row, 0, email_item)
+                
+                # Current Role (Account Type)
+                current_role_item = QTableWidgetItem(user["role"].upper())
+                if not user.get("can_modify", False):
+                    current_role_item.setForeground(QColor("#FF0000"))
+                user_table.setItem(row, 1, current_role_item)
+                
+                # Role ComboBox (Change Account Type)
+                role_combo = QComboBox()
+                if self.user_data['role'] == 'root':
+                    role_combo.addItems(["root", "admin", "moderator", "user"])
+                elif self.user_data['role'] == 'admin':
+                    role_combo.addItems(["moderator", "user"])
+                
+                role_combo.setCurrentText(user["role"])
+                role_combo.setEnabled(user.get("can_modify", False))
+                
+                if not user.get("can_modify", False):
+                    role_combo.setStyleSheet("""
+                        QComboBox:disabled {
+                            color: #A0A0A0;
+                            background-color: #F0F0F0;
+                            border: 1px solid #D0D0D0;
+                        }
+                    """)
+                
+                def handle_role_change(email, new_role):
+                    reply = QMessageBox.question(
+                        dialog,
+                        "Confirm Role Change",
+                        f"Are you sure you want to change the role of {email} to {new_role}?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No
+                    )
+                    
+                    if reply == QMessageBox.Yes:
+                        success = self.user_manager.change_user_role(self.user_token, email, new_role)
+                        if success:
+                            QMessageBox.information(dialog, "Success", "Role updated successfully")
+                            dialog.accept()
+                            self.show_user_management()
+                        else:
+                            QMessageBox.warning(dialog, "Error", "Failed to update role")
+                            role_combo.setCurrentText(user["role"])
+                
+                role_combo.currentTextChanged.connect(
+                    lambda new_role, email=user["email"]: handle_role_change(email, new_role)
+                )
+                
+                user_table.setCellWidget(row, 2, role_combo)
+                
+                # Created date
+                created_item = QTableWidgetItem(user["created_at"])
+                if not user.get("can_modify", False):
+                    created_item.setForeground(QColor("#FF0000"))
+                user_table.setItem(row, 3, created_item)
+                
+                # Last login
+                last_login_item = QTableWidgetItem(user["last_login"] or "Never")
+                if not user.get("can_modify", False):
+                    last_login_item.setForeground(QColor("#FF0000"))
+                user_table.setItem(row, 4, last_login_item)
+        
+        # Connect filter signals
+        email_filter.textChanged.connect(apply_filters)
+        role_filter.currentTextChanged.connect(apply_filters)
+        date_from.dateChanged.connect(apply_filters)
+        date_to.dateChanged.connect(apply_filters)
+        
+        def clear_all_filters():
+            email_filter.clear()
+            role_filter.setCurrentText("All Roles")
+            date_from.setDate(QDate.currentDate().addYears(-1))
+            date_to.setDate(QDate.currentDate())
+        
+        clear_filters.clicked.connect(clear_all_filters)
+        
+        # Initial population of table
+        apply_filters()
+        
+        # Set column resize modes and adjust widths after populating data
+        header = user_table.horizontalHeader()
+        
+        # Temporarily set all columns to ResizeToContents to calculate optimal widths
+        for col in range(user_table.columnCount()):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        
+        # Get the calculated widths
+        column_widths = [header.sectionSize(col) for col in range(user_table.columnCount())]
+        
+        # Set fixed widths based on content
+        for col in range(user_table.columnCount()):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
+            header.resizeSection(col, column_widths[col] + 20)
+        
+        # Make the email column stretch if there's extra space
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        
+        main_layout.addWidget(user_table)
         
         # Buttons
         buttons = QHBoxLayout()
@@ -464,7 +641,7 @@ class MainWindow(QMainWindow):
         buttons.addWidget(delete_user)
         buttons.addWidget(reset_password)
         buttons.addWidget(close_button)
-        layout.addLayout(buttons)
+        main_layout.addLayout(buttons)
         
         def handle_add_user():
             # Show add user dialog
@@ -484,11 +661,11 @@ class MainWindow(QMainWindow):
             add_layout.addWidget(password)
             
             role = QComboBox()
-            # Root can create any role, admin can only create moderator and user roles
+            # Root can create any role except root, admin can only create moderator and user roles
             if self.user_data['role'] == 'root':
-                role.addItems(["user", "moderator", "admin"])
+                role.addItems(["admin", "moderator", "user"])
             else:  # admin
-                role.addItems(["user", "moderator"])
+                role.addItems(["moderator", "user"])
             add_layout.addWidget(role)
             
             add_buttons = QHBoxLayout()
