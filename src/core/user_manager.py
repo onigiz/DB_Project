@@ -291,36 +291,112 @@ class UserManager:
     
     def delete_user(self, admin_token: str, user_email: str) -> bool:
         """Delete user (requires admin/root token)"""
-        token_data = self.security_manager.verify_session_token(admin_token)
-        if not token_data:
-            return False
+        try:
+            print("\n=== Starting delete_user operation ===")
+            print(f"Attempting to delete user: {user_email}")
             
-        token_role = token_data["role"]
-        
-        users_data = self._load_users()
-        if user_email not in users_data["users"]:
-            return False
-            
-        target_user = users_data["users"][user_email]
-        
-        # Cannot delete root user
-        if target_user.get("is_root", False):
-            return False
-            
-        # Root can delete any non-root user
-        if token_role == "root":
-            pass
-        # Admin can only delete moderator and user accounts
-        elif token_role == "admin":
-            if target_user["role"] in ["root", "admin"]:
+            # Verify admin/root token
+            print("Verifying admin token...")
+            token_data = self.security_manager.verify_session_token(admin_token)
+            if not token_data:
+                print("ERROR: Token verification failed - token_data is None")
                 return False
-        else:
+            print(f"Token data received: {token_data}")
+                
+            # Validate token data structure
+            if not isinstance(token_data, dict) or 'role' not in token_data:
+                print(f"ERROR: Invalid token data format - {type(token_data)}")
+                print(f"Token data contents: {token_data}")
+                return False
+                
+            # Get token role with safe access
+            token_role = token_data.get('role')
+            print(f"Token role: {token_role}")
+            if not token_role:
+                print("ERROR: No role found in token data")
+                return False
+                
+            # Validate user_email parameter
+            if not user_email or not isinstance(user_email, str):
+                print(f"ERROR: Invalid user email format - Type: {type(user_email)}, Value: {user_email}")
+                return False
+                
+            # Load users data with validation
+            try:
+                print("Loading users data...")
+                users_data = self._load_users()
+                print(f"Users data type: {type(users_data)}")
+                if not isinstance(users_data, dict):
+                    print("ERROR: Users data is not a dictionary")
+                    return False
+                if "users" not in users_data:
+                    print("ERROR: No 'users' key in users data")
+                    print(f"Available keys: {list(users_data.keys())}")
+                    return False
+                print(f"Available users: {list(users_data['users'].keys())}")
+            except Exception as e:
+                print(f"ERROR: Failed to load users data - {str(e)}")
+                print(f"Exception type: {type(e)}")
+                return False
+                
+            # Check if user exists
+            if user_email not in users_data["users"]:
+                print(f"ERROR: User {user_email} not found in database")
+                return False
+                
+            target_user = users_data["users"][user_email]
+            print(f"Target user data: {target_user}")
+            
+            # Cannot delete root user
+            if target_user.get("is_root", False):
+                print("ERROR: Cannot delete root user")
+                return False
+                
+            # Root can delete any non-root user
+            if token_role == "root":
+                print("Processing deletion request from root user")
+                if not target_user.get("is_root", False):
+                    try:
+                        print(f"Deleting user {user_email} from database...")
+                        del users_data["users"][user_email]
+                        print("User deleted from memory, attempting to save changes...")
+                        self._save_users(users_data)
+                        print("Changes saved successfully")
+                        return True
+                    except Exception as e:
+                        print(f"ERROR: Failed to save changes - {str(e)}")
+                        print(f"Exception type: {type(e)}")
+                        return False
+                return False
+            
+            # Admin can only delete moderator and user accounts
+            elif token_role == "admin":
+                print("Processing deletion request from admin user")
+                if target_user["role"] not in ["root", "admin"]:
+                    try:
+                        print(f"Deleting user {user_email} from database...")
+                        del users_data["users"][user_email]
+                        print("User deleted from memory, attempting to save changes...")
+                        self._save_users(users_data)
+                        print("Changes saved successfully")
+                        return True
+                    except Exception as e:
+                        print(f"ERROR: Failed to save changes - {str(e)}")
+                        print(f"Exception type: {type(e)}")
+                        return False
+                print("ERROR: Admin cannot delete root or admin users")
+                return False
+            
+            print(f"ERROR: Invalid role {token_role} for deletion")
             return False
-        
-        del users_data["users"][user_email]
-        self._save_users(users_data)
-        
-        return True
+                
+        except Exception as e:
+            print("\n=== Unexpected error in delete_user ===")
+            print(f"Error type: {type(e)}")
+            print(f"Error message: {str(e)}")
+            print(f"Attempting to delete user: {user_email}")
+            print("=======================================")
+            return False
 
     def change_user_role(self, admin_token: str, user_email: str, new_role: str) -> bool:
         """Change user role (requires admin/root token)"""

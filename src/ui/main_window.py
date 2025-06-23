@@ -91,7 +91,29 @@ class MainWindow(QMainWindow):
         self.user_manager = user_manager
         self.data_manager = data_manager
         self.user_token = user_token
-        self.user_data = user_data
+        
+        # Validate and set user_data
+        if not isinstance(user_data, dict):
+            print(f"WARNING: user_data is not a dictionary: {user_data}")
+            self.user_data = {}
+        else:
+            self.user_data = user_data.copy()  # Make a copy to avoid reference issues
+            
+        # Ensure required fields exist
+        if 'email' not in self.user_data or 'role' not in self.user_data:
+            print(f"WARNING: user_data missing required fields: {self.user_data}")
+            # Get user info from token
+            token_data = self.user_manager.security_manager.verify_session_token(user_token)
+            if token_data and isinstance(token_data, dict):
+                self.user_data.update({
+                    'email': token_data.get('email', ''),
+                    'role': token_data.get('role', '')
+                })
+            else:
+                print("ERROR: Could not get user info from token")
+        
+        print(f"Initialized MainWindow with user_data: {self.user_data}")
+        
         self.current_page = 1
         self.page_size = 100
         
@@ -722,47 +744,173 @@ class MainWindow(QMainWindow):
             add_dialog.exec()
         
         def handle_delete_user():
+            """Handle user deletion with proper role-based permissions"""
+            print("\n=== Starting handle_delete_user in MainWindow ===")
+            print(f"Current user data: {self.user_data}")  # Debug user_data contents
+            
             current_row = user_table.currentRow()
+            print(f"Selected row index: {current_row}")
+            
             if current_row < 0:
+                print("ERROR: No row selected")
                 QMessageBox.warning(dialog, "Error", "Please select a user to delete")
                 return
             
-            user_email = user_table.item(current_row, 0).text()
-            user_role = user_table.item(current_row, 1).text()
-            
-            # Check permissions based on roles
-            if self.user_data['role'] == 'admin':
-                if user_role in ['root', 'admin']:
-                    QMessageBox.warning(dialog, "Error", "You don't have permission to delete this user")
+            try:
+                # Get user information
+                print("Retrieving user information from table...")
+                email_item = user_table.item(current_row, 0)
+                role_item = user_table.item(current_row, 1)
+                
+                print(f"Email item type: {type(email_item)}")
+                print(f"Role item type: {type(role_item)}")
+                
+                if not email_item or not role_item:
+                    print("ERROR: Could not get email or role item from table")
+                    QMessageBox.warning(dialog, "Error", "Could not retrieve user information")
                     return
-            
-            if user_email == self.user_data["email"]:
-                QMessageBox.warning(dialog, "Error", "Cannot delete your own account")
-                return
-            
-            reply = QMessageBox.question(
-                dialog,
-                "Confirm Delete",
-                f"Are you sure you want to delete user {user_email}?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            
-            if reply == QMessageBox.Yes:
-                if self.user_manager.delete_user(self.user_token, user_email):
-                    QMessageBox.information(
-                        dialog,
-                        "Success",
-                        "User deleted successfully"
-                    )
-                    dialog.accept()
-                    self.show_user_management()
-                else:
+                
+                user_email = email_item.text().strip()
+                print(f"User email (raw): {email_item.text()}")
+                print(f"User email (stripped): {user_email}")
+                
+                if not user_email:
+                    print("ERROR: Empty user email after stripping")
+                    QMessageBox.warning(dialog, "Error", "Invalid user email")
+                    return
+                    
+                # Fix role extraction - get raw text and convert to lowercase
+                raw_role = role_item.text()
+                print(f"User role (raw): {raw_role}")
+                
+                user_role = raw_role.lower()
+                if "account type:" in user_role:
+                    user_role = user_role.replace("account type:", "").strip()
+                print(f"User role (processed): {user_role}")
+                
+                # Check if trying to delete own account - safely get email
+                current_user_email = self.user_data.get('email', '')
+                print(f"Current user email: {current_user_email}")
+                
+                if user_email == current_user_email:
+                    print("ERROR: Attempting to delete own account")
                     QMessageBox.warning(
                         dialog,
                         "Error",
-                        "Failed to delete user"
+                        "You cannot delete your own account"
                     )
+                    return
+                
+                # Check role-based permissions - safely get role
+                current_user_role = self.user_data.get('role', '')
+                print(f"Current user role: {current_user_role}")
+                
+                if not current_user_role:
+                    print("ERROR: No role found in user_data")
+                    QMessageBox.warning(
+                        dialog,
+                        "Error",
+                        "Session error: No role found. Please log out and log in again."
+                    )
+                    return
+                
+                if current_user_role == 'admin':
+                    if user_role in ['root', 'admin']:
+                        print("ERROR: Admin attempting to delete root/admin account")
+                        QMessageBox.warning(
+                            dialog,
+                            "Permission Denied",
+                            "As an admin, you can only delete moderator and user accounts"
+                        )
+                        return
+                elif current_user_role == 'root':
+                    if user_role == 'root':
+                        print("ERROR: Attempting to delete root account")
+                        QMessageBox.warning(
+                            dialog,
+                            "Permission Denied",
+                            "Root accounts cannot be deleted"
+                        )
+                        return
+                
+                # Show confirmation dialog with user details
+                print("Showing confirmation dialog...")
+                confirm_msg = (
+                    f"Are you sure you want to delete the following user?\n\n"
+                    f"Email: {user_email}\n"
+                    f"Role: {user_role.upper()}\n\n"
+                    "This action cannot be undone!"
+                )
+                
+                reply = QMessageBox.question(
+                    dialog,
+                    "Confirm User Deletion",
+                    confirm_msg,
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                
+                print(f"User reply to confirmation: {reply == QMessageBox.Yes}")
+                
+                if reply == QMessageBox.Yes:
+                    # Attempt to delete the user
+                    print(f"Attempting to delete user {user_email}...")
+                    success = self.user_manager.delete_user(self.user_token, user_email)
+                    print(f"Delete operation result: {success}")
+                    
+                    if success:
+                        # Remove the row from the table
+                        print("Removing row from table...")
+                        user_table.removeRow(current_row)
+                        
+                        QMessageBox.information(
+                            dialog,
+                            "Success",
+                            f"User {user_email} has been deleted successfully"
+                        )
+                        
+                        # Refresh the user table to ensure consistency
+                        print("Refreshing user management view...")
+                        dialog.accept()
+                        self.show_user_management()
+                    else:
+                        print("ERROR: Delete operation failed")
+                        error_msg = (
+                            f"Failed to delete user {user_email}.\n\n"
+                            f"This could be due to:\n"
+                            f"• Invalid or expired session token\n"
+                            f"• User has special permissions that prevent deletion\n"
+                            f"• Database access error\n\n"
+                            f"Please try logging out and back in, then try again."
+                        )
+                        QMessageBox.critical(
+                            dialog,
+                            "Error",
+                            error_msg
+                        )
+                        
+            except Exception as e:
+                print("\n=== Unexpected error in handle_delete_user ===")
+                print(f"Error type: {type(e)}")
+                print(f"Error message: {str(e)}")
+                print("Stack trace:")
+                import traceback
+                traceback.print_exc()
+                print("===========================================")
+                
+                error_msg = (
+                    f"An unexpected error occurred while trying to delete user {user_email}:\n\n"
+                    f"{str(e)}\n\n"
+                    f"Please try:\n"
+                    f"• Refreshing the user management page\n"
+                    f"• Logging out and back in\n"
+                    f"• Contacting system administrator if the problem persists"
+                )
+                QMessageBox.critical(
+                    dialog,
+                    "Error",
+                    error_msg
+                )
         
         def handle_reset_password():
             current_row = user_table.currentRow()
