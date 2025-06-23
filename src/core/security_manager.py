@@ -3,7 +3,7 @@ import json
 import bcrypt
 import re
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Dict, Optional, Tuple
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -163,7 +163,7 @@ class SecurityManager:
     def create_session_token(self, user_data: dict) -> Tuple[str, datetime]:
         """Create a session token for user"""
         # Create token with timestamp and user data
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(UTC)
         expiry = timestamp + timedelta(hours=24)
         
         token_data = {
@@ -204,7 +204,7 @@ class SecurityManager:
             
             # Check expiry
             expiry = datetime.fromisoformat(token_data["expires_at"])
-            if expiry < datetime.utcnow():
+            if expiry < datetime.now(UTC):
                 return None
                 
             return token_data

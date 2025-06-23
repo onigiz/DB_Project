@@ -6,7 +6,7 @@ from getpass import getpass
 import json
 from pathlib import Path
 import stat
-from datetime import datetime
+from datetime import datetime, UTC
 from core.security_manager import SecurityManager
 from core.user_manager import UserManager
 
@@ -271,7 +271,7 @@ def initialize_user_database(admin_email: str, admin_password: str, master_passw
                 admin_email: {
                     "password_hash": security_manager.hash_password(admin_password).decode(),
                     "role": "admin",
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                     "last_login": None
                 }
             }

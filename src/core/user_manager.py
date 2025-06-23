@@ -1,6 +1,6 @@
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Dict, Optional, List, Tuple
 from core.security_manager import SecurityManager
 from pathlib import Path
@@ -52,7 +52,7 @@ class UserManager:
                         admin_email: {
                             "password_hash": self.security_manager.hash_password(admin_password).decode(),
                             "role": "admin",
-                            "created_at": datetime.utcnow().isoformat(),
+                            "created_at": datetime.now(UTC).isoformat(),
                             "last_login": None
                         }
                     }
@@ -93,7 +93,7 @@ class UserManager:
     
     def _check_account_lockout(self, email: str) -> Tuple[bool, Optional[datetime]]:
         """Check if account is locked out"""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         
         # Clear old lockouts
         self.account_lockouts = {
@@ -122,7 +122,7 @@ class UserManager:
 
     def _record_failed_attempt(self, email: str) -> None:
         """Record a failed login attempt"""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         if email not in self.failed_attempts:
             self.failed_attempts[email] = []
         self.failed_attempts[email].append(now)
@@ -131,10 +131,10 @@ class UserManager:
         """Authenticate user and return session token if successful"""
         # Check for account lockout
         is_locked, lockout_end = self._check_account_lockout(email)
-        if is_locked and lockout_end:  # Add null check
-            remaining_minutes = int((lockout_end - datetime.utcnow()).total_seconds() / 60)
+        if is_locked and lockout_end:
+            remaining_minutes = int((lockout_end - datetime.now(UTC)).total_seconds() / 60)
             raise ValueError(f"Account is locked. Try again in {remaining_minutes} minutes.")
-        elif is_locked:  # Handle case where lockout_end is None
+        elif is_locked:
             raise ValueError("Account is locked. Please try again later.")
 
         users_data = self._load_users()
@@ -153,7 +153,7 @@ class UserManager:
             del self.failed_attempts[email]
         
         # Update last login
-        user_data["last_login"] = datetime.utcnow().isoformat()
+        user_data["last_login"] = datetime.now(UTC).isoformat()
         users_data["users"][email] = user_data
         self._save_users(users_data)
         
@@ -186,7 +186,7 @@ class UserManager:
         users_data["users"][email] = {
             "password_hash": self.security_manager.hash_password(password).decode(),
             "role": role,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "created_by": token_data["email"],
             "last_login": None
         }
