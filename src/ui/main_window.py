@@ -444,22 +444,6 @@ class MainWindow(QMainWindow):
         
         main_layout = QVBoxLayout(dialog)
         
-        # Add menu bar
-        menu_bar = QMenuBar()
-        main_layout.setMenuBar(menu_bar)
-        
-        # Add Export menu
-        export_menu = menu_bar.addMenu('Export Data')
-        
-        # Export actions
-        export_excel_action = QAction('Export to Excel', dialog)
-        export_csv_action = QAction('Export to CSV', dialog)
-        export_json_action = QAction('Export to JSON', dialog)
-        
-        export_menu.addAction(export_excel_action)
-        export_menu.addAction(export_csv_action)
-        export_menu.addAction(export_json_action)
-
         # Add filter section
         filter_layout = QHBoxLayout()
         
@@ -652,12 +636,29 @@ class MainWindow(QMainWindow):
         add_user = QPushButton("Add User")
         delete_user = QPushButton("Delete User")
         reset_password = QPushButton("Reset Password")
-        close_button = QPushButton("Close")
+        export_button = QPushButton("Export Data")
+        
+        # Style the export button with red background and white text
+        export_button.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                border: none;
+                padding: 5px 15px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #c82333;
+            }
+            QPushButton:pressed {
+                background-color: #bd2130;
+            }
+        """)
         
         buttons.addWidget(add_user)
         buttons.addWidget(delete_user)
         buttons.addWidget(reset_password)
-        buttons.addWidget(close_button)
+        buttons.addWidget(export_button)
         main_layout.addLayout(buttons)
         
         def handle_add_user():
@@ -834,7 +835,53 @@ class MainWindow(QMainWindow):
             
             reset_dialog.exec()
         
-        def export_data(export_type):
+        def show_export_dialog():
+            """Show export type selection dialog"""
+            export_dialog = QDialog(dialog)
+            export_dialog.setWindowTitle("Export Data")
+            export_dialog.setModal(True)
+            
+            export_layout = QVBoxLayout(export_dialog)
+            
+            # Add descriptive label
+            label = QLabel("Select export format:")
+            label.setStyleSheet("font-size: 12px; margin-bottom: 10px;")
+            export_layout.addWidget(label)
+            
+            # Create export type buttons
+            excel_btn = QPushButton("Excel Format (.xlsx)")
+            csv_btn = QPushButton("CSV Format (.csv)")
+            json_btn = QPushButton("JSON Format (.json)")
+            
+            # Style the buttons
+            button_style = """
+                QPushButton {
+                    padding: 10px;
+                    margin: 5px;
+                    text-align: left;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #f8f9fa;
+                }
+            """
+            excel_btn.setStyleSheet(button_style)
+            csv_btn.setStyleSheet(button_style)
+            json_btn.setStyleSheet(button_style)
+            
+            export_layout.addWidget(excel_btn)
+            export_layout.addWidget(csv_btn)
+            export_layout.addWidget(json_btn)
+            
+            # Connect buttons to export function
+            excel_btn.clicked.connect(lambda: export_data('excel', export_dialog))
+            csv_btn.clicked.connect(lambda: export_data('csv', export_dialog))
+            json_btn.clicked.connect(lambda: export_data('json', export_dialog))
+            
+            export_dialog.exec()
+        
+        def export_data(export_type, export_dialog):
             """Export user table data to specified format"""
             try:
                 # Get all data from the table
@@ -878,6 +925,7 @@ class MainWindow(QMainWindow):
                         "Success",
                         f"Data exported successfully to {file_path}"
                     )
+                    export_dialog.accept()  # Close the export dialog after successful export
             except Exception as e:
                 QMessageBox.warning(
                     dialog,
@@ -885,15 +933,11 @@ class MainWindow(QMainWindow):
                     f"Failed to export data: {str(e)}"
                 )
         
-        # Connect export actions
-        export_excel_action.triggered.connect(lambda: export_data('excel'))
-        export_csv_action.triggered.connect(lambda: export_data('csv'))
-        export_json_action.triggered.connect(lambda: export_data('json'))
-        
+        # Connect buttons
         add_user.clicked.connect(handle_add_user)
         delete_user.clicked.connect(handle_delete_user)
         reset_password.clicked.connect(handle_reset_password)
-        close_button.clicked.connect(dialog.accept)
+        export_button.clicked.connect(show_export_dialog)
         
         dialog.exec()
     
