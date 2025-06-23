@@ -2,11 +2,16 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QTableWidget, QTableWidgetItem,
                              QFileDialog, QMessageBox, QMenuBar, QMenu, QStatusBar,
                              QDialog, QLineEdit, QComboBox, QSpinBox, QGroupBox)
-from PySide6.QtCore import Qt, Slot, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtCore import Qt, Slot, Signal, QSize
+from PySide6.QtGui import QAction, QIcon, QWindow
 import os
 import pandas as pd
 from datetime import datetime
+
+# Add Qt constants
+from PySide6.QtCore import Qt
+Qt.WA_TransparentForMouseEvents = Qt.WidgetAttribute.WA_TransparentForMouseEvents
+Qt.WindowStaysOnTopHint = Qt.WindowType.WindowStaysOnTopHint
 
 class SchemaDialog(QDialog):
     def __init__(self, parent=None):
@@ -107,7 +112,7 @@ class MainWindow(QMainWindow):
         
         # Create table
         self.table = QTableWidget()
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)  # Make table read-only for all users
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)  # Make table read-only for all users
         
         # Create navigation buttons
         nav_layout = QHBoxLayout()
@@ -120,8 +125,8 @@ class MainWindow(QMainWindow):
         self.next_button.clicked.connect(self.next_page)
         nav_layout.addWidget(self.next_button)
         
-        # Add edit buttons if user is admin or moderator
-        if self.user_data['role'] in ['admin', 'moderator']:
+        # Add edit buttons if user is admin, root or moderator
+        if self.user_data['role'] in ['root', 'admin', 'moderator']:
             edit_layout = QHBoxLayout()
             
             add_button = QPushButton("Add Record")
@@ -155,19 +160,19 @@ class MainWindow(QMainWindow):
         # File menu
         file_menu = menubar.addMenu('File')
         
-        # Excel upload (admin/moderator only)
-        if self.user_data['role'] in ['admin', 'moderator']:
+        # Excel upload (admin/root/moderator only)
+        if self.user_data['role'] in ['root', 'admin', 'moderator']:
             upload_action = QAction('Upload Excel', self)
             upload_action.triggered.connect(self.handle_excel_upload)
             file_menu.addAction(upload_action)
         
-        # Schema definition (admin only)
-        if self.user_data['role'] == 'admin':
+        # Schema definition (admin/root only)
+        if self.user_data['role'] in ['root', 'admin']:
             schema_action = QAction('Define Schema', self)
             schema_action.triggered.connect(self.handle_schema_definition)
             file_menu.addAction(schema_action)
             
-            # Database configuration (admin only)
+            # Database configuration (admin/root only)
             db_config_action = QAction('Database Configuration', self)
             db_config_action.triggered.connect(self.show_database_config)
             file_menu.addAction(db_config_action)
@@ -178,8 +183,8 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
-        # Admin menu (only for admin users)
-        if self.user_data['role'] == 'admin':
+        # Admin menu (only for admin/root users)
+        if self.user_data['role'] in ['root', 'admin']:
             admin_menu = menubar.addMenu('Admin')
             
             users_action = QAction('Manage Users', self)
@@ -196,10 +201,45 @@ class MainWindow(QMainWindow):
         logout_action = QAction('Logout', self)
         logout_action.triggered.connect(self.handle_logout)
         account_menu.addAction(logout_action)
+
+        # Create role label directly on the main window
+        role_label = QLabel(f"• {self.user_data['role'].upper()}", self)
+        role_label.setObjectName("roleLabel")
+        
+        # Set color based on role
+        role_colors = {
+            'root': '#0078d4',      # Mavi
+            'admin': '#28a745',     # Yeşil
+            'moderator': '#ffc107', # Sarı
+            'user': '#6f42c1'       # Mor
+        }
+        
+        role_color = role_colors.get(self.user_data['role'].lower(), '#6f42c1')  # Default to purple if role not found
+        
+        role_label.setStyleSheet(f"""
+            QLabel {{
+                color: {role_color};
+                font-weight: bold;
+                font-size: 14px;
+                padding: 5px 10px;
+                background: none;
+                border: none;
+            }}
+        """)
+        
+        # Position the label in the top-right corner
+        menubar_height = menubar.height()
+        role_label.move(self.width() - role_label.width() - 10, 0)
+        
+        # Update label position when window is resized
+        self.resizeEvent = lambda event: role_label.move(
+            self.width() - role_label.width() - 10,
+            0
+        )
     
     def show_add_record_dialog(self):
         """Show dialog to add a new record"""
-        if self.user_data['role'] not in ['admin', 'moderator']:
+        if self.user_data['role'] not in ['root', 'admin', 'moderator']:
             return
             
         dialog = QDialog(self)
@@ -245,7 +285,7 @@ class MainWindow(QMainWindow):
     
     def show_edit_record_dialog(self):
         """Show dialog to edit selected record"""
-        if self.user_data['role'] not in ['admin', 'moderator']:
+        if self.user_data['role'] not in ['root', 'admin', 'moderator']:
             return
             
         current_row = self.table.currentRow()
@@ -302,7 +342,7 @@ class MainWindow(QMainWindow):
     
     def delete_selected_record(self):
         """Delete selected record"""
-        if self.user_data['role'] not in ['admin', 'moderator']:
+        if self.user_data['role'] not in ['root', 'admin', 'moderator']:
             return
             
         current_row = self.table.currentRow()
@@ -331,7 +371,7 @@ class MainWindow(QMainWindow):
     
     def handle_excel_upload(self):
         """Handle Excel file upload"""
-        if self.user_data['role'] not in ['admin', 'moderator']:
+        if self.user_data['role'] not in ['root', 'admin', 'moderator']:
             return
             
         file_path, _ = QFileDialog.getOpenFileName(
@@ -351,7 +391,7 @@ class MainWindow(QMainWindow):
     
     def handle_schema_definition(self):
         """Handle schema definition"""
-        if self.user_data['role'] != 'admin':
+        if self.user_data['role'] not in ['root', 'admin']:
             return
             
         dialog = SchemaDialog(self)
@@ -385,8 +425,8 @@ class MainWindow(QMainWindow):
                     )
     
     def show_user_management(self):
-        """Show user management dialog (admin only)"""
-        if self.user_data['role'] != 'admin':
+        """Show user management dialog (admin/root only)"""
+        if self.user_data['role'] not in ['root', 'admin']:
             return
         
         dialog = QDialog(self)
@@ -444,7 +484,11 @@ class MainWindow(QMainWindow):
             add_layout.addWidget(password)
             
             role = QComboBox()
-            role.addItems(["user", "moderator", "admin"])  # Added moderator role
+            # Root can create any role, admin can only create moderator and user roles
+            if self.user_data['role'] == 'root':
+                role.addItems(["user", "moderator", "admin"])
+            else:  # admin
+                role.addItems(["user", "moderator"])
             add_layout.addWidget(role)
             
             add_buttons = QHBoxLayout()
@@ -489,6 +533,14 @@ class MainWindow(QMainWindow):
                 return
             
             user_email = user_table.item(current_row, 0).text()
+            user_role = user_table.item(current_row, 1).text()
+            
+            # Check permissions based on roles
+            if self.user_data['role'] == 'admin':
+                if user_role in ['root', 'admin']:
+                    QMessageBox.warning(dialog, "Error", "You don't have permission to delete this user")
+                    return
+            
             if user_email == self.user_data["email"]:
                 QMessageBox.warning(dialog, "Error", "Cannot delete your own account")
                 return
@@ -524,6 +576,13 @@ class MainWindow(QMainWindow):
                 return
             
             user_email = user_table.item(current_row, 0).text()
+            user_role = user_table.item(current_row, 1).text()
+            
+            # Check permissions based on roles
+            if self.user_data['role'] == 'admin':
+                if user_role in ['root', 'admin']:
+                    QMessageBox.warning(dialog, "Error", "You don't have permission to reset this user's password")
+                    return
             
             # Show reset password dialog
             reset_dialog = QDialog(dialog)
@@ -697,7 +756,7 @@ class MainWindow(QMainWindow):
     
     def show_database_config(self):
         """Show dialog to configure database location and password"""
-        if self.user_data['role'] != 'admin':
+        if self.user_data['role'] not in ['root', 'admin']:
             return
             
         dialog = QDialog(self)

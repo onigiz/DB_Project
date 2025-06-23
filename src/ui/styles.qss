@@ -57,6 +57,19 @@ QLabel {
     color: #ffffff;
 }
 
+/* Role Label */
+QLabel#roleLabel {
+    color: #0078d4;
+    font-weight: bold;
+    padding: 5px 10px;
+    border: 1px solid #0078d4;
+    border-radius: 3px;
+    margin: 2px 5px;
+    background-color: rgba(0, 120, 212, 0.1);
+    min-width: 150px;
+    min-height: 30px;
+}
+
 /* Error Labels */
 QLabel#errorLabel {
     color: #ff99a4;

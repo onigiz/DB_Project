@@ -133,53 +133,37 @@ def clean_and_create_directory_structure():
                 log_error(f"Directory is not writable: {directory}")
                 raise Exception(f"Directory {directory} is not writable: {e}")
 
-def create_env_file(company_name: str, admin_email: str, admin_password: str, 
+def create_env_file(company_name: str, root_email: str, root_password: str, 
                    master_password: str, support_email: str, copyright_year: str) -> None:
-    """Create .env file with initial configuration"""
-    log_step("Creating .env file")
-    
-    env_content = f"""# Database Configuration
-MASTER_PASSWORD={master_password}
-
-# Security Settings
-SESSION_DURATION_HOURS=24
-MIN_PASSWORD_LENGTH=8
-SALT_FILE=data/salt.key
-
-# File Locations
-USERS_FILE=data/users.enc
-DATABASE_FILE=data/database.enc
-SCHEMA_FILE=data/schema.enc
-CONFIG_FILE=data/db_config.enc
-
-# Company Information
-COMPANY_NAME={company_name}
-COPYRIGHT_YEAR={copyright_year}
-SUPPORT_EMAIL={support_email}
-
-# Admin Account
-ADMIN_EMAIL={admin_email}
-ADMIN_PASSWORD={admin_password}
-"""
+    """Create .env file with required variables"""
     try:
-        # Remove existing .env file if it exists
-        if os.path.exists('.env'):
-            log_info("Removing existing .env file")
-            os.remove('.env')
+        log_step("Creating .env file")
         
-        # Create new .env file
-        log_info("Creating new .env file")
-        with open('.env', 'w') as f:
-            f.write(env_content)
+        env_content = f"""# Company Information
+COMPANY_NAME="{company_name}"
+COPYRIGHT_YEAR="{copyright_year}"
+SUPPORT_EMAIL="{support_email}"
+
+# Root Account
+ROOT_EMAIL="{root_email}"
+ROOT_PASSWORD="{root_password}"
+
+# Security
+MASTER_PASSWORD="{master_password}"
+
+# File Paths
+SALT_FILE="data/security/salt.key"
+USERS_FILE="data/users/users.enc"
+SCHEMA_FILE="data/database/schema.enc"
+DATABASE_FILE="data/database/database.enc"
+"""
         
-        # Verify file was created
-        if os.path.exists('.env'):
-            log_info("Created and verified .env file")
-        else:
-            log_error(".env file was not created")
-            raise Exception(".env file creation failed")
+        with open(".env", "w") as f:
+            f.write(env_content.strip())
+            
+        log_info("Created .env file")
     except Exception as e:
-        log_error(f"Error creating .env file: {e}")
+        log_error(f"Failed to create .env file: {str(e)}")
         raise
 
 def setup_resources():
@@ -240,80 +224,35 @@ def get_validated_input(prompt: str, validation_func=None, is_password: bool = F
             return value
         print("Invalid input. Please try again.")
 
-def initialize_user_database(admin_email: str, admin_password: str, master_password: str) -> None:
-    """Initialize the user database with admin account"""
-    log_step("Initializing user database")
-    
+def initialize_user_database(root_email: str, root_password: str, master_password: str) -> None:
+    """Initialize user database with root account"""
     try:
-        # Ensure data directory exists
-        if not os.path.exists('data'):
-            log_warning("Data directory missing, creating it")
-            os.makedirs('data', exist_ok=True)
+        log_step("Initializing user database")
         
-        # Remove existing salt and users files if they exist
-        salt_file = "data/salt.key"
-        users_file = "data/users.enc"
+        # Create security manager
+        security_manager = SecurityManager(salt_file="data/security/salt.key")
         
-        for file in [salt_file, users_file]:
-            if os.path.exists(file):
-                log_info(f"Removing existing file: {file}")
-                os.remove(file)
-                log_info(f"Successfully removed: {file}")
+        # Create user manager
+        user_manager = UserManager(
+            security_manager=security_manager,
+            users_file="data/users/users.enc"
+        )
         
-        # Create security manager with correct salt file path
-        log_info(f"Creating SecurityManager with salt file: {salt_file}")
-        security_manager = SecurityManager(salt_file=salt_file)
-        
-        # Create initial admin user data
-        log_info(f"Creating admin account for: {admin_email}")
-        admin_data = {
-            "users": {
-                admin_email: {
-                    "password_hash": security_manager.hash_password(admin_password).decode(),
-                    "role": "admin",
-                    "created_at": datetime.now(UTC).isoformat(),
-                    "last_login": None
-                }
-            }
-        }
-        
-        # Encrypt and save admin data
-        log_info(f"Encrypting user data with master password")
-        encrypted_data = security_manager.encrypt_file(admin_data, master_password)
-        
-        log_info(f"Writing encrypted data to: {users_file}")
-        with open(users_file, 'wb') as f:
-            f.write(encrypted_data)
-        
-        # Verify the data was written correctly
-        log_info("Verifying written data")
-        try:
-            with open(users_file, 'rb') as f:
-                test_data = f.read()
-            log_info("Testing decryption of written data")
-            decrypted_data = security_manager.decrypt_file(test_data, master_password)
-            if decrypted_data == admin_data:
-                log_info("Data verification successful")
-            else:
-                log_error("Data verification failed - content mismatch")
-                raise ValueError("Data verification failed - content mismatch")
-        except Exception as e:
-            log_error(f"Data verification failed: {str(e)}")
-            raise ValueError(f"Failed to verify written data: {str(e)}")
-            
+        # Root account will be created automatically by UserManager
+        log_info("Initialized user database with root account")
     except Exception as e:
         log_error(f"Failed to initialize user database: {str(e)}")
-        raise Exception(f"Failed to initialize user database: {str(e)}")
+        raise
 
 def main():
     print("=== Database Project Initialization ===")
     
     try:
-        # Get company and admin information with validation
+        # Get company and root information with validation
         log_step("Collecting initialization information")
         company_name = get_validated_input("Enter company name: ")
-        admin_email = get_validated_input("Enter admin email: ", validate_email)
-        admin_password = get_validated_input("Enter admin password: ", validate_password, True)
+        root_email = get_validated_input("Enter root email: ", validate_email)
+        root_password = get_validated_input("Enter root password: ", validate_password, True)
         master_password = get_validated_input("Enter master password for database encryption: ", validate_password, True)
         copyright_year = get_validated_input("Enter copyright year: ")
         support_email = get_validated_input("Enter support email: ", validate_email)
@@ -324,15 +263,15 @@ def main():
         # Create .env file with all required variables
         create_env_file(
             company_name=company_name,
-            admin_email=admin_email,
-            admin_password=admin_password,
+            root_email=root_email,
+            root_password=root_password,
             master_password=master_password,
             support_email=support_email,
             copyright_year=copyright_year
         )
         
-        # Initialize user database with admin account
-        initialize_user_database(admin_email, admin_password, master_password)
+        # Initialize user database with root account
+        initialize_user_database(root_email, root_password, master_password)
         
         # Setup resources
         setup_resources()
@@ -342,8 +281,8 @@ def main():
         print("1. Replace dummy logo and icon in resources/company/ with your company's assets")
         print("2. Review settings in .env file if needed")
         print("3. Run 'python src/main.py' to start the application")
-        print("4. Log in with the admin credentials you provided")
-        print("5. Set up the database schema and additional users through the admin interface")
+        print("4. Log in with the root credentials you provided")
+        print("5. Set up the database schema and additional users through the root interface")
         
     except Exception as e:
         log_error(f"Initialization failed: {str(e)}")

@@ -7,7 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 class UserManager:
-    VALID_ROLES = ["admin", "moderator", "user"]  # Added moderator role
+    VALID_ROLES = ["root", "admin", "moderator", "user"]  # Added root role
     MAX_LOGIN_ATTEMPTS = 5
     LOCKOUT_DURATION = 15  # minutes
     
@@ -29,7 +29,7 @@ class UserManager:
         # Ensure data directory exists
         os.makedirs(os.path.dirname(self.users_file), exist_ok=True)
         
-        self._ensure_admin()
+        self._ensure_root()
     
     def _get_required_env(self, var_name: str) -> str:
         """Get required environment variable or raise error"""
@@ -38,28 +38,29 @@ class UserManager:
             raise ValueError(f"Required environment variable {var_name} is not set. Please check your .env file.")
         return value
     
-    def _ensure_admin(self) -> None:
-        """Ensure admin user exists"""
+    def _ensure_root(self) -> None:
+        """Ensure root user exists"""
         try:
             if not os.path.exists(self.users_file):
-                # Get required admin credentials from environment
-                admin_email = self._get_required_env("ADMIN_EMAIL")
-                admin_password = self._get_required_env("ADMIN_PASSWORD")
+                # Get required root credentials from environment
+                root_email = self._get_required_env("ROOT_EMAIL")
+                root_password = self._get_required_env("ROOT_PASSWORD")
                 
-                # Create admin user
-                admin_data = {
+                # Create root user
+                root_data = {
                     "users": {
-                        admin_email: {
-                            "password_hash": self.security_manager.hash_password(admin_password).decode(),
-                            "role": "admin",
+                        root_email: {
+                            "password_hash": self.security_manager.hash_password(root_password).decode(),
+                            "role": "root",
                             "created_at": datetime.now(UTC).isoformat(),
-                            "last_login": None
+                            "last_login": None,
+                            "is_root": True
                         }
                     }
                 }
                 
                 # Encrypt and save
-                encrypted_data = self.security_manager.encrypt_file(admin_data, self.master_password)
+                encrypted_data = self.security_manager.encrypt_file(root_data, self.master_password)
                 with open(self.users_file, 'wb') as f:
                     f.write(encrypted_data)
                 
@@ -67,11 +68,11 @@ class UserManager:
                 with open(self.users_file, 'rb') as f:
                     test_data = f.read()
                 decrypted_data = self.security_manager.decrypt_file(test_data, self.master_password)
-                if decrypted_data != admin_data:
-                    raise ValueError("Admin data verification failed")
+                if decrypted_data != root_data:
+                    raise ValueError("Root data verification failed")
                     
         except Exception as e:
-            raise ValueError(f"Failed to create admin account: {str(e)}")
+            raise ValueError(f"Failed to create root account: {str(e)}")
     
     def _load_users(self) -> dict:
         """Load users data from encrypted file"""
@@ -166,14 +167,27 @@ class UserManager:
         return token, user_data
     
     def create_user(self, admin_token: str, email: str, password: str, role: str = "user") -> bool:
-        """Create new user (requires admin token)"""
-        # Verify admin token
+        """Create new user (requires admin/root token)"""
+        # Verify admin/root token
         token_data = self.security_manager.verify_session_token(admin_token)
-        if not token_data or token_data["role"] != "admin":
+        if not token_data:
             return False
+            
+        # Get token role
+        token_role = token_data["role"]
         
-        # Validate role
+        # Validate role hierarchy
         if role not in self.VALID_ROLES:
+            return False
+            
+        # Root can create any role
+        if token_role == "root":
+            pass
+        # Admin can only create moderator and user roles
+        elif token_role == "admin":
+            if role in ["root", "admin"]:
+                return False
+        else:
             return False
         
         users_data = self._load_users()
@@ -188,7 +202,8 @@ class UserManager:
             "role": role,
             "created_at": datetime.now(UTC).isoformat(),
             "created_by": token_data["email"],
-            "last_login": None
+            "last_login": None,
+            "is_root": role == "root"
         }
         
         self._save_users(users_data)
@@ -218,30 +233,58 @@ class UserManager:
         return True
     
     def reset_password(self, admin_token: str, user_email: str, new_password: str) -> bool:
-        """Reset user password (requires admin token)"""
+        """Reset user password (requires admin/root token)"""
         token_data = self.security_manager.verify_session_token(admin_token)
-        if not token_data or token_data["role"] != "admin":
+        if not token_data:
             return False
+            
+        token_role = token_data["role"]
         
         users_data = self._load_users()
         if user_email not in users_data["users"]:
             return False
+            
+        target_user = users_data["users"][user_email]
+        
+        # Root can reset any password
+        if token_role == "root":
+            pass
+        # Admin can only reset moderator and user passwords
+        elif token_role == "admin":
+            if target_user["role"] in ["root", "admin"]:
+                return False
+        else:
+            return False
         
         # Update password
-        user_data = users_data["users"][user_email]
-        user_data["password_hash"] = self.security_manager.hash_password(new_password).decode()
-        users_data["users"][user_email] = user_data
+        target_user["password_hash"] = self.security_manager.hash_password(new_password).decode()
+        users_data["users"][user_email] = target_user
         self._save_users(users_data)
         
         return True
     
     def get_users(self, admin_token: str) -> Optional[List[Dict]]:
-        """Get list of users (requires admin token)"""
+        """Get list of users (requires admin/root token)"""
         token_data = self.security_manager.verify_session_token(admin_token)
-        if not token_data or token_data["role"] != "admin":
+        if not token_data or token_data["role"] not in ["admin", "root"]:
             return None
-        
+            
         users_data = self._load_users()
+        
+        # If admin, filter out root and admin users
+        if token_data["role"] == "admin":
+            return [
+                {
+                    "email": email,
+                    "role": data["role"],
+                    "created_at": data["created_at"],
+                    "last_login": data["last_login"]
+                }
+                for email, data in users_data["users"].items()
+                if data["role"] not in ["root", "admin"]
+            ]
+        
+        # If root, show all users
         return [
             {
                 "email": email,
@@ -253,20 +296,32 @@ class UserManager:
         ]
     
     def delete_user(self, admin_token: str, user_email: str) -> bool:
-        """Delete user (requires admin token)"""
+        """Delete user (requires admin/root token)"""
         token_data = self.security_manager.verify_session_token(admin_token)
-        if not token_data or token_data["role"] != "admin":
+        if not token_data:
             return False
+            
+        token_role = token_data["role"]
         
         users_data = self._load_users()
         if user_email not in users_data["users"]:
             return False
+            
+        target_user = users_data["users"][user_email]
         
-        # Cannot delete last admin
-        if users_data["users"][user_email]["role"] == "admin":
-            admin_count = sum(1 for u in users_data["users"].values() if u["role"] == "admin")
-            if admin_count <= 1:
+        # Cannot delete root user
+        if target_user.get("is_root", False):
+            return False
+            
+        # Root can delete any non-root user
+        if token_role == "root":
+            pass
+        # Admin can only delete moderator and user accounts
+        elif token_role == "admin":
+            if target_user["role"] in ["root", "admin"]:
                 return False
+        else:
+            return False
         
         del users_data["users"][user_email]
         self._save_users(users_data)
