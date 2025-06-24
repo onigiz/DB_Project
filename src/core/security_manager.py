@@ -4,45 +4,142 @@ import bcrypt
 import re
 import logging
 from datetime import datetime, timedelta, UTC
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from base64 import b64encode, b64decode
+from enum import Enum, auto
+from .logging_config import LogConfig  # Import LogConfig at the top level
+from dotenv import load_dotenv
+
+class FileOperation(Enum):
+    READ = auto()
+    WRITE = auto()
+    DELETE = auto()
+    SCHEMA_MODIFY = auto()
+    # User management operations
+    USER_CREATE = auto()
+    USER_DELETE = auto()
+    USER_MODIFY = auto()
+    USER_VIEW = auto()
+    PASSWORD_RESET = auto()
+
+class FilePermissions:
+    """Manages role-based file permissions"""
+    
+    ROLE_PERMISSIONS = {
+        "root": {
+            # File operations
+            FileOperation.READ: True,
+            FileOperation.WRITE: True,
+            FileOperation.DELETE: True,
+            FileOperation.SCHEMA_MODIFY: True,
+            # User management
+            FileOperation.USER_CREATE: True,
+            FileOperation.USER_DELETE: True,
+            FileOperation.USER_MODIFY: True,
+            FileOperation.USER_VIEW: True,
+            FileOperation.PASSWORD_RESET: True
+        },
+        "admin": {
+            # File operations
+            FileOperation.READ: True,
+            FileOperation.WRITE: True,
+            FileOperation.DELETE: True,
+            FileOperation.SCHEMA_MODIFY: True,
+            # User management - limited
+            FileOperation.USER_CREATE: True,
+            FileOperation.USER_DELETE: True,
+            FileOperation.USER_MODIFY: True,
+            FileOperation.USER_VIEW: True,
+            FileOperation.PASSWORD_RESET: True
+        },
+        "moderator": {
+            # File operations
+            FileOperation.READ: True,
+            FileOperation.WRITE: True,
+            FileOperation.DELETE: False,
+            FileOperation.SCHEMA_MODIFY: False,
+            # User management - very limited
+            FileOperation.USER_CREATE: False,
+            FileOperation.USER_DELETE: False,
+            FileOperation.USER_MODIFY: False,
+            FileOperation.USER_VIEW: True,
+            FileOperation.PASSWORD_RESET: False
+        },
+        "user": {
+            # File operations
+            FileOperation.READ: True,
+            FileOperation.WRITE: False,
+            FileOperation.DELETE: False,
+            FileOperation.SCHEMA_MODIFY: False,
+            # User management - none
+            FileOperation.USER_CREATE: False,
+            FileOperation.USER_DELETE: False,
+            FileOperation.USER_MODIFY: False,
+            FileOperation.USER_VIEW: False,
+            FileOperation.PASSWORD_RESET: False
+        }
+    }
+
+    # Role hierarchy definition
+    ROLE_HIERARCHY = {
+        "root": ["admin", "moderator", "user"],
+        "admin": ["moderator", "user"],
+        "moderator": ["user"],
+        "user": []
+    }
+
+    @classmethod
+    def has_permission(cls, role: str, operation: FileOperation) -> bool:
+        """Check if role has permission for operation"""
+        if role not in cls.ROLE_PERMISSIONS:
+            return False
+        return cls.ROLE_PERMISSIONS[role].get(operation, False)
+
+    @classmethod
+    def get_role_permissions(cls, role: str) -> Dict:
+        """Get all permissions for a role"""
+        return cls.ROLE_PERMISSIONS.get(role, {})
+
+    @classmethod
+    def get_roles_with_permission(cls, operation: FileOperation) -> List[str]:
+        """Get all roles that have a specific permission"""
+        return [role for role, perms in cls.ROLE_PERMISSIONS.items() 
+                if perms.get(operation, False)]
+
+    @classmethod
+    def can_manage_role(cls, admin_role: str, target_role: str) -> bool:
+        """Check if admin_role can manage users with target_role"""
+        # Root can manage all roles except other roots
+        if admin_role == "root":
+            return target_role != "root"
+            
+        # Check role hierarchy
+        if admin_role in cls.ROLE_HIERARCHY:
+            return target_role in cls.ROLE_HIERARCHY[admin_role]
+            
+        return False
+
+    @classmethod
+    def get_manageable_roles(cls, admin_role: str) -> List[str]:
+        """Get list of roles that can be managed by admin_role"""
+        return cls.ROLE_HIERARCHY.get(admin_role, [])
 
 class SecurityManager:
-    def __init__(self, salt_file: str = "salt.key", log_file: str = "security.log"):
+    def __init__(self, salt_file: str = "salt.key"):
         """Initialize SecurityManager with a salt file for key derivation"""
         self.salt_file = salt_file
-        self._setup_logging(log_file)
+        self._setup_logging()
         self._ensure_salt()
         # Load and store salt at initialization
         self._salt = self._load_salt()
         
-    def _setup_logging(self, log_file: str) -> None:
-        """Setup security event logging"""
-        log_dir = os.path.dirname(log_file)
-        if log_dir:
-            os.makedirs(log_dir, exist_ok=True)
-            
-        # Configure logging
-        self.logger = logging.getLogger('security_manager')
-        self.logger.setLevel(logging.INFO)
-        
-        # Create file handler
-        handler = logging.FileHandler(log_file)
-        handler.setLevel(logging.INFO)
-        
-        # Create formatter
-        formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        handler.setFormatter(formatter)
-        
-        # Add handler to logger
-        self.logger.addHandler(handler)
+    def _setup_logging(self) -> None:
+        """Setup security event logging using centralized logging configuration"""
+        self.logger = LogConfig.get_security_logger()
         
     def _log_security_event(self, event_type: str, details: str, level: str = "INFO") -> None:
         """Log security event"""

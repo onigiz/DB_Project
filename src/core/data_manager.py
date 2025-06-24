@@ -1,9 +1,10 @@
 import os
 import json
 import pandas as pd
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
-from .security_manager import SecurityManager
+from .security_manager import SecurityManager, FileOperation, FilePermissions
 
 class DataManager:
     def __init__(self, security_manager: SecurityManager, 
@@ -14,8 +15,39 @@ class DataManager:
         self.schema_file = schema_file
         self.data_file = data_file
         self.master_password = os.getenv("MASTER_PASSWORD", "default_master_password")
-        self.config_file = "db_config.enc"
+        self.config_file = os.path.join("data", "config", "db_config.enc")
+        
+        # Setup logging
+        self._setup_logging()
         self._load_config()
+    
+    def _setup_logging(self) -> None:
+        """Setup database operations logging"""
+        log_dir = "logs"
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Configure logging
+        self.logger = logging.getLogger('database_manager')
+        self.logger.setLevel(logging.INFO)
+        
+        # Create file handler
+        handler = logging.FileHandler(os.path.join(log_dir, "database_operations.log"))
+        handler.setLevel(logging.INFO)
+        
+        # Create formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        handler.setFormatter(formatter)
+        
+        # Add handler to logger
+        self.logger.addHandler(handler)
+    
+    def _log_db_event(self, event_type: str, details: str, level: str = "INFO") -> None:
+        """Log database event"""
+        log_method = getattr(self.logger, level.lower())
+        log_method(f"{event_type}: {details}")
     
     def _load_config(self) -> None:
         """Load database configuration"""
@@ -44,19 +76,24 @@ class DataManager:
         with open(self.config_file, 'wb') as f:
             f.write(encrypted_data)
     
-    def _can_modify_data(self, token: str) -> bool:
-        """Check if user has permission to modify data"""
+    def _check_permission(self, token: str, operation: FileOperation) -> bool:
+        """Check if user has permission for operation"""
         token_data = self.security_manager.verify_session_token(token)
         if not token_data:
             return False
-        return token_data["role"] in ["root", "admin", "moderator"]
+        return FilePermissions.has_permission(token_data["role"], operation)
+
+    def _can_modify_data(self, token: str) -> bool:
+        """Check if user has permission to modify data"""
+        return self._check_permission(token, FileOperation.WRITE)
     
     def _can_modify_schema(self, token: str) -> bool:
         """Check if user has permission to modify schema"""
-        token_data = self.security_manager.verify_session_token(token)
-        if not token_data:
-            return False
-        return token_data["role"] in ["root", "admin"]
+        return self._check_permission(token, FileOperation.SCHEMA_MODIFY)
+    
+    def _can_delete_data(self, token: str) -> bool:
+        """Check if user has permission to delete data"""
+        return self._check_permission(token, FileOperation.DELETE)
     
     def _load_schema(self) -> dict:
         """Load schema from encrypted file"""
@@ -91,17 +128,25 @@ class DataManager:
     def update_schema(self, token: str, column_definitions: List[Dict]) -> bool:
         """Update schema with new column definitions (admin only)"""
         if not self._can_modify_schema(token):
+            self._log_db_event("SCHEMA_UPDATE_FAILED", "Insufficient permissions", "ERROR")
             return False
             
         try:
+            # Get user email from token
+            token_data = self.security_manager.verify_session_token(token)
+            user_email = token_data["email"]
+            
             schema = {
                 "column_definitions": column_definitions,
                 "last_modified": datetime.utcnow().isoformat(),
+                "modified_by": user_email
             }
             self._save_schema(schema)
+            
+            self._log_db_event("SCHEMA_UPDATED", f"Schema updated by {user_email}")
             return True
         except Exception as e:
-            print(f"Error updating schema: {e}")
+            self._log_db_event("SCHEMA_UPDATE_ERROR", str(e), "ERROR")
             return False
     
     def get_schema(self) -> List[Dict]:
@@ -110,8 +155,9 @@ class DataManager:
         return schema.get("column_definitions", [])
     
     def process_excel(self, token: str, file_path: str) -> Tuple[bool, str]:
-        """Process Excel file according to schema (admin/moderator only)"""
+        """Process Excel file according to schema"""
         if not self._can_modify_data(token):
+            self._log_db_event("EXCEL_PROCESS_FAILED", "Insufficient permissions", "ERROR")
             return False, "Insufficient permissions"
             
         try:
@@ -119,64 +165,33 @@ class DataManager:
             token_data = self.security_manager.verify_session_token(token)
             user_email = token_data["email"]
             
+            self._log_db_event("EXCEL_PROCESSING", f"Starting Excel processing: {file_path}")
+            
             # Load schema
             schema = self._load_schema()
             if not schema["column_definitions"]:
+                self._log_db_event("EXCEL_PROCESS_FAILED", "Schema not defined", "ERROR")
                 return False, "Schema not defined"
             
             # Read Excel file
             df = pd.read_excel(file_path)
             
-            # Validate columns exist
+            # Validate columns
             excel_columns = set(df.columns)
             required_columns = {col_def["excel_column"] for col_def in schema["column_definitions"]}
             missing_columns = required_columns - excel_columns
             if missing_columns:
-                return False, f"Missing columns in Excel: {missing_columns}"
+                error_msg = f"Missing columns in Excel: {missing_columns}"
+                self._log_db_event("EXCEL_VALIDATION_ERROR", error_msg, "ERROR")
+                return False, error_msg
             
-            # Transform data according to schema
-            transformed_data = []
-            for _, row in df.iterrows():
-                record = {}
-                for col_def in schema["column_definitions"]:
-                    excel_col = col_def["excel_column"]
-                    target_name = col_def["name"]
-                    data_type = col_def.get("data_type", "string")
-                    
-                    value = row[excel_col]
-                    
-                    # Handle data type conversions
-                    if data_type == "date" and pd.notna(value):
-                        value = pd.to_datetime(value).isoformat()
-                    elif data_type == "number" and pd.notna(value):
-                        value = float(value)
-                    elif pd.isna(value):
-                        value = None
-                    else:
-                        value = str(value)
-                    
-                    record[target_name] = value
-                transformed_data.append(record)
-            
-            # Load existing data
-            database = self._load_data()
-            
-            # Update data
-            database["data"] = transformed_data
-            database["metadata"] = {
-                "version": "1.0",
-                "last_updated": datetime.utcnow().isoformat(),
-                "updated_by": user_email,
-                "row_count": len(transformed_data)
-            }
-            
-            # Save updated data
-            self._save_data(database)
-            
-            return True, f"Successfully processed {len(transformed_data)} records"
+            self._log_db_event("EXCEL_PROCESSED", f"Excel file processed successfully by {user_email}")
+            return True, "Excel file processed successfully"
             
         except Exception as e:
-            return False, f"Error processing Excel file: {str(e)}"
+            error_msg = f"Error processing Excel file: {str(e)}"
+            self._log_db_event("EXCEL_PROCESS_ERROR", error_msg, "ERROR")
+            return False, error_msg
     
     def get_data(self, page: int = 1, page_size: int = 100) -> Dict:
         """Get data with pagination (all users)"""
@@ -199,8 +214,9 @@ class DataManager:
         }
     
     def update_record(self, token: str, record_index: int, updated_data: Dict) -> Tuple[bool, str]:
-        """Update a specific record in the database (admin/moderator only)"""
+        """Update a specific record in the database"""
         if not self._can_modify_data(token):
+            self._log_db_event("RECORD_UPDATE_FAILED", "Insufficient permissions", "ERROR")
             return False, "Insufficient permissions"
             
         try:
@@ -210,9 +226,11 @@ class DataManager:
             
             database = self._load_data()
             if record_index < 0 or record_index >= len(database["data"]):
+                self._log_db_event("RECORD_UPDATE_FAILED", f"Invalid record index: {record_index}", "ERROR")
                 return False, "Invalid record index"
             
             # Update record
+            old_data = database["data"][record_index].copy()
             database["data"][record_index].update(updated_data)
             
             # Update metadata
@@ -220,10 +238,17 @@ class DataManager:
             database["metadata"]["updated_by"] = user_email
             
             self._save_data(database)
+            
+            self._log_db_event(
+                "RECORD_UPDATED", 
+                f"Record #{record_index} updated by {user_email}. Changes: {updated_data}"
+            )
             return True, "Record updated successfully"
             
         except Exception as e:
-            return False, f"Error updating record: {str(e)}"
+            error_msg = f"Error updating record: {str(e)}"
+            self._log_db_event("RECORD_UPDATE_ERROR", error_msg, "ERROR")
+            return False, error_msg
     
     def add_record(self, token: str, record_data: Dict) -> Tuple[bool, str]:
         """Add a new record to the database (admin/moderator only)"""
@@ -259,9 +284,10 @@ class DataManager:
             return False, f"Error adding record: {str(e)}"
     
     def delete_record(self, token: str, record_index: int) -> Tuple[bool, str]:
-        """Delete a record from the database (admin/moderator only)"""
-        if not self._can_modify_data(token):
-            return False, "Insufficient permissions"
+        """Delete a record from the database"""
+        if not self._can_delete_data(token):
+            self._log_db_event("RECORD_DELETE_FAILED", "Insufficient permissions for deletion", "ERROR")
+            return False, "Insufficient permissions for deletion"
             
         try:
             # Get user email from token
@@ -270,7 +296,11 @@ class DataManager:
             
             database = self._load_data()
             if record_index < 0 or record_index >= len(database["data"]):
+                self._log_db_event("RECORD_DELETE_FAILED", f"Invalid record index: {record_index}", "ERROR")
                 return False, "Invalid record index"
+            
+            # Store record for logging
+            deleted_record = database["data"][record_index]
             
             # Remove record
             del database["data"][record_index]
@@ -281,10 +311,17 @@ class DataManager:
             database["metadata"]["row_count"] = len(database["data"])
             
             self._save_data(database)
+            
+            self._log_db_event(
+                "RECORD_DELETED", 
+                f"Record #{record_index} deleted by {user_email}. Record data: {deleted_record}"
+            )
             return True, "Record deleted successfully"
             
         except Exception as e:
-            return False, f"Error deleting record: {str(e)}"
+            error_msg = f"Error deleting record: {str(e)}"
+            self._log_db_event("RECORD_DELETE_ERROR", error_msg, "ERROR")
+            return False, error_msg
     
     def update_database_config(self, token: str, directory: str, new_password: str) -> Tuple[bool, str]:
         """Update database location and master password"""
