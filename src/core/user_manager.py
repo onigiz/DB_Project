@@ -2,12 +2,12 @@ import os
 import json
 from datetime import datetime, timedelta, UTC
 from typing import Dict, Optional, List, Tuple
-from core.security_manager import SecurityManager
+from core.security_manager import SecurityManager, FileOperation, FilePermissions
 from pathlib import Path
 from dotenv import load_dotenv
 
 class UserManager:
-    VALID_ROLES = ["root", "admin", "moderator", "user"]  # Added root role
+    VALID_ROLES = list(FilePermissions.ROLE_PERMISSIONS.keys())
     MAX_LOGIN_ATTEMPTS = 5
     LOCKOUT_DURATION = 15  # minutes
     
@@ -166,28 +166,38 @@ class UserManager:
         
         return token, user_data
     
+    def _can_manage_role(self, admin_role: str, target_role: str) -> bool:
+        """Check if admin_role can manage users with target_role"""
+        admin_perms = FilePermissions.get_role_permissions(admin_role)
+        target_perms = FilePermissions.get_role_permissions(target_role)
+        
+        # Root can manage all roles except other roots
+        if admin_role == "root":
+            return not FilePermissions.has_permission(target_role, FileOperation.SCHEMA_MODIFY)
+        
+        # Admin can manage roles with fewer permissions
+        if admin_role == "admin":
+            return (not FilePermissions.has_permission(target_role, FileOperation.SCHEMA_MODIFY) and
+                   not FilePermissions.has_permission(target_role, FileOperation.DELETE))
+        
+        return False
+
     def create_user(self, admin_token: str, email: str, password: str, role: str = "user") -> bool:
-        """Create new user (requires admin/root token)"""
-        # Verify admin/root token
+        """Create new user (requires appropriate permissions)"""
+        # Verify token and permissions
         token_data = self.security_manager.verify_session_token(admin_token)
-        if not token_data:
+        if not token_data or not FilePermissions.has_permission(token_data["role"], FileOperation.USER_CREATE):
             return False
             
         # Get token role
         token_role = token_data["role"]
         
-        # Validate role hierarchy
+        # Validate role
         if role not in self.VALID_ROLES:
             return False
             
-        # Root can create any role
-        if token_role == "root":
-            pass
-        # Admin can only create moderator and user roles
-        elif token_role == "admin":
-            if role in ["root", "admin"]:
-                return False
-        else:
+        # Check if admin can manage this role
+        if not FilePermissions.can_manage_role(token_role, role):
             return False
         
         users_data = self._load_users()
@@ -233,179 +243,97 @@ class UserManager:
         return True
     
     def reset_password(self, admin_token: str, user_email: str, new_password: str) -> bool:
-        """Reset user password (requires admin/root token)"""
+        """Reset user password (requires appropriate permissions)"""
         token_data = self.security_manager.verify_session_token(admin_token)
-        if not token_data:
+        if not token_data or not FilePermissions.has_permission(token_data["role"], FileOperation.PASSWORD_RESET):
             return False
             
         token_role = token_data["role"]
-        
         users_data = self._load_users()
+        
         if user_email not in users_data["users"]:
             return False
             
         target_user = users_data["users"][user_email]
         
-        # Root can reset any password
-        if token_role == "root":
-            pass
-        # Admin can only reset moderator and user passwords
-        elif token_role == "admin":
-            if target_user["role"] in ["root", "admin"]:
-                return False
-        else:
+        # Check if admin can manage this user's role
+        if not FilePermissions.can_manage_role(token_role, target_user["role"]):
             return False
         
         # Update password
         target_user["password_hash"] = self.security_manager.hash_password(new_password).decode()
+        target_user["password_reset_by"] = token_data["email"]
+        target_user["password_reset_at"] = datetime.now(UTC).isoformat()
+        
         users_data["users"][user_email] = target_user
         self._save_users(users_data)
         
         return True
     
     def get_users(self, admin_token: str) -> Optional[List[Dict]]:
-        """Get list of users (requires admin/root token)"""
+        """Get list of users (requires view permission)"""
         token_data = self.security_manager.verify_session_token(admin_token)
-        if not token_data or token_data["role"] not in ["admin", "root"]:
+        if not token_data or not FilePermissions.has_permission(token_data["role"], FileOperation.USER_VIEW):
             return None
             
         users_data = self._load_users()
+        token_role = token_data["role"]
         
-        # Both root and admin can see all users
         return [
             {
                 "email": email,
                 "role": data["role"],
                 "created_at": data["created_at"],
                 "last_login": data["last_login"],
-                # Add flag to indicate if the user can be modified by current user
-                "can_modify": (
-                    token_data["role"] == "root" and not data.get("is_root", False)
-                ) or (
-                    token_data["role"] == "admin" and 
-                    data["role"] not in ["root", "admin"]
-                )
+                "can_modify": FilePermissions.can_manage_role(token_role, data["role"]),
+                "can_delete": (FilePermissions.has_permission(token_role, FileOperation.USER_DELETE) and 
+                             FilePermissions.can_manage_role(token_role, data["role"]) and
+                             not data.get("is_root", False))
             }
             for email, data in users_data["users"].items()
         ]
     
     def delete_user(self, admin_token: str, user_email: str) -> bool:
-        """Delete user (requires admin/root token)"""
+        """Delete user (requires appropriate permissions)"""
         try:
-            print("\n=== Starting delete_user operation ===")
-            print(f"Attempting to delete user: {user_email}")
-            
-            # Verify admin/root token
-            print("Verifying admin token...")
+            # Verify token and permissions
             token_data = self.security_manager.verify_session_token(admin_token)
-            if not token_data:
-                print("ERROR: Token verification failed - token_data is None")
-                return False
-            print(f"Token data received: {token_data}")
-                
-            # Validate token data structure
-            if not isinstance(token_data, dict) or 'role' not in token_data:
-                print(f"ERROR: Invalid token data format - {type(token_data)}")
-                print(f"Token data contents: {token_data}")
+            if not token_data or not FilePermissions.has_permission(token_data["role"], FileOperation.USER_DELETE):
                 return False
                 
-            # Get token role with safe access
-            token_role = token_data.get('role')
-            print(f"Token role: {token_role}")
-            if not token_role:
-                print("ERROR: No role found in token data")
-                return False
-                
-            # Validate user_email parameter
-            if not user_email or not isinstance(user_email, str):
-                print(f"ERROR: Invalid user email format - Type: {type(user_email)}, Value: {user_email}")
-                return False
-                
-            # Load users data with validation
-            try:
-                print("Loading users data...")
-                users_data = self._load_users()
-                print(f"Users data type: {type(users_data)}")
-                if not isinstance(users_data, dict):
-                    print("ERROR: Users data is not a dictionary")
-                    return False
-                if "users" not in users_data:
-                    print("ERROR: No 'users' key in users data")
-                    print(f"Available keys: {list(users_data.keys())}")
-                    return False
-                print(f"Available users: {list(users_data['users'].keys())}")
-            except Exception as e:
-                print(f"ERROR: Failed to load users data - {str(e)}")
-                print(f"Exception type: {type(e)}")
-                return False
-                
+            token_role = token_data["role"]
+            users_data = self._load_users()
+            
             # Check if user exists
             if user_email not in users_data["users"]:
-                print(f"ERROR: User {user_email} not found in database")
                 return False
                 
             target_user = users_data["users"][user_email]
-            print(f"Target user data: {target_user}")
+            target_role = target_user["role"]
+            
+            # Check if admin can manage this user's role
+            if not FilePermissions.can_manage_role(token_role, target_role):
+                return False
             
             # Cannot delete root user
             if target_user.get("is_root", False):
-                print("ERROR: Cannot delete root user")
-                return False
-                
-            # Root can delete any non-root user
-            if token_role == "root":
-                print("Processing deletion request from root user")
-                if not target_user.get("is_root", False):
-                    try:
-                        print(f"Deleting user {user_email} from database...")
-                        del users_data["users"][user_email]
-                        print("User deleted from memory, attempting to save changes...")
-                        self._save_users(users_data)
-                        print("Changes saved successfully")
-                        return True
-                    except Exception as e:
-                        print(f"ERROR: Failed to save changes - {str(e)}")
-                        print(f"Exception type: {type(e)}")
-                        return False
                 return False
             
-            # Admin can only delete moderator and user accounts
-            elif token_role == "admin":
-                print("Processing deletion request from admin user")
-                if target_user["role"] not in ["root", "admin"]:
-                    try:
-                        print(f"Deleting user {user_email} from database...")
-                        del users_data["users"][user_email]
-                        print("User deleted from memory, attempting to save changes...")
-                        self._save_users(users_data)
-                        print("Changes saved successfully")
-                        return True
-                    except Exception as e:
-                        print(f"ERROR: Failed to save changes - {str(e)}")
-                        print(f"Exception type: {type(e)}")
-                        return False
-                print("ERROR: Admin cannot delete root or admin users")
-                return False
-            
-            print(f"ERROR: Invalid role {token_role} for deletion")
-            return False
+            # Delete user
+            del users_data["users"][user_email]
+            self._save_users(users_data)
+            return True
                 
         except Exception as e:
-            print("\n=== Unexpected error in delete_user ===")
-            print(f"Error type: {type(e)}")
-            print(f"Error message: {str(e)}")
-            print(f"Attempting to delete user: {user_email}")
-            print("=======================================")
+            print(f"Error deleting user: {str(e)}")
             return False
 
     def change_user_role(self, admin_token: str, user_email: str, new_role: str) -> bool:
-        """Change user role (requires admin/root token)"""
-        # Verify admin/root token
+        """Change user role (requires appropriate permissions)"""
         token_data = self.security_manager.verify_session_token(admin_token)
-        if not token_data:
+        if not token_data or not FilePermissions.has_permission(token_data["role"], FileOperation.USER_MODIFY):
             return False
             
-        # Get token role
         token_role = token_data["role"]
         
         # Validate new role
@@ -417,20 +345,15 @@ class UserManager:
             return False
             
         target_user = users_data["users"][user_email]
+        current_role = target_user["role"]
+        
+        # Check if admin can manage both current and new roles
+        if not (FilePermissions.can_manage_role(token_role, current_role) and 
+                FilePermissions.can_manage_role(token_role, new_role)):
+            return False
         
         # Cannot modify root user
         if target_user.get("is_root", False):
-            return False
-            
-        # Root can change any role except root users
-        if token_role == "root":
-            if target_user["role"] == "root":
-                return False
-        # Admin can only modify moderator and user roles
-        elif token_role == "admin":
-            if target_user["role"] in ["root", "admin"] or new_role in ["root", "admin"]:
-                return False
-        else:
             return False
         
         # Update role
@@ -441,4 +364,12 @@ class UserManager:
         users_data["users"][user_email] = target_user
         self._save_users(users_data)
         
-        return True 
+        return True
+
+    def get_manageable_roles(self, admin_token: str) -> List[str]:
+        """Get list of roles that can be managed by the token holder"""
+        token_data = self.security_manager.verify_session_token(admin_token)
+        if not token_data:
+            return []
+        
+        return FilePermissions.get_manageable_roles(token_data["role"]) 

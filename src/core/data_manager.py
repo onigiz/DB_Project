@@ -3,7 +3,7 @@ import json
 import pandas as pd
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
-from .security_manager import SecurityManager
+from .security_manager import SecurityManager, FileOperation, FilePermissions
 
 class DataManager:
     def __init__(self, security_manager: SecurityManager, 
@@ -44,19 +44,24 @@ class DataManager:
         with open(self.config_file, 'wb') as f:
             f.write(encrypted_data)
     
-    def _can_modify_data(self, token: str) -> bool:
-        """Check if user has permission to modify data"""
+    def _check_permission(self, token: str, operation: FileOperation) -> bool:
+        """Check if user has permission for operation"""
         token_data = self.security_manager.verify_session_token(token)
         if not token_data:
             return False
-        return token_data["role"] in ["root", "admin", "moderator"]
+        return FilePermissions.has_permission(token_data["role"], operation)
+
+    def _can_modify_data(self, token: str) -> bool:
+        """Check if user has permission to modify data"""
+        return self._check_permission(token, FileOperation.WRITE)
     
     def _can_modify_schema(self, token: str) -> bool:
         """Check if user has permission to modify schema"""
-        token_data = self.security_manager.verify_session_token(token)
-        if not token_data:
-            return False
-        return token_data["role"] in ["root", "admin"]
+        return self._check_permission(token, FileOperation.SCHEMA_MODIFY)
+    
+    def _can_delete_data(self, token: str) -> bool:
+        """Check if user has permission to delete data"""
+        return self._check_permission(token, FileOperation.DELETE)
     
     def _load_schema(self) -> dict:
         """Load schema from encrypted file"""
@@ -259,9 +264,9 @@ class DataManager:
             return False, f"Error adding record: {str(e)}"
     
     def delete_record(self, token: str, record_index: int) -> Tuple[bool, str]:
-        """Delete a record from the database (admin/moderator only)"""
-        if not self._can_modify_data(token):
-            return False, "Insufficient permissions"
+        """Delete a record from the database (requires delete permission)"""
+        if not self._can_delete_data(token):
+            return False, "Insufficient permissions for deletion"
             
         try:
             # Get user email from token
