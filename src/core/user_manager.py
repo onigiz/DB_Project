@@ -4,7 +4,6 @@ import logging
 from datetime import datetime, timedelta, UTC
 from typing import Dict, Optional, List, Tuple
 from core.security_manager import SecurityManager, FileOperation, FilePermissions
-from pathlib import Path
 from dotenv import load_dotenv
 
 class UserManager:

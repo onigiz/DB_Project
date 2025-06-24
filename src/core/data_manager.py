@@ -15,7 +15,7 @@ class DataManager:
         self.schema_file = schema_file
         self.data_file = data_file
         self.master_password = os.getenv("MASTER_PASSWORD", "default_master_password")
-        self.config_file = "db_config.enc"
+        self.config_file = os.path.join("data", "config", "db_config.enc")
         
         # Setup logging
         self._setup_logging()

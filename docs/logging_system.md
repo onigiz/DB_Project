@@ -1,167 +1,245 @@
 # Logging System Documentation
 
-## 1. Overview 🔍
+## 📑 Table of Contents
+1. [Overview](#overview)
+2. [Log Types](#log-types)
+3. [Log Structure](#log-structure)
+4. [Configuration](#configuration)
+5. [Log Rotation](#log-rotation)
+6. [Usage Guide](#usage-guide)
+7. [Best Practices](#best-practices)
+8. [Troubleshooting](#troubleshooting)
 
-The project implements a comprehensive logging system with three main components:
+## Overview
 
-1. 🔒 Security Logs (`security.log`)
-2. 👥 User Operation Logs (`user_operations.log`)
-3. 💾 Database Operation Logs (`database_operations.log`)
+The logging system is a centralized mechanism for recording various events and operations within the application. It provides consistent logging across all components while ensuring proper organization and rotation of log files.
 
-## 2. Log Files and Locations 📁
+### Key Features
+- 🔄 Automatic log rotation
+- 📁 Organized log categories
+- 🔒 Security event tracking
+- 📊 Operation monitoring
+- ⚡ High-performance logging
 
-### 2.1 Security Logs
-**File:** `logs/security.log`  
-**Responsible Class:** `SecurityManager`
+## Log Types
 
-| Level | Event Type | Description | Example Message |
-|:---:|:---|:---|:---|
-| ✅ INFO | `TOKEN_VERIFIED` | Successful token verification | `2024-03-15 10:30:15 - INFO - TOKEN_VERIFIED: Token verified for user admin@example.com` |
-| ⚠️ WARNING | `TOKEN_EXPIRED` | Token expiration | `2024-03-15 10:35:20 - WARNING - TOKEN_EXPIRED: Token expired at 2024-03-15 10:30:15` |
-| ❌ ERROR | `TOKEN_ERROR` | Token verification failure | `2024-03-15 10:40:25 - ERROR - TOKEN_ERROR: Token verification failed: Invalid signature` |
-| ✅ INFO | `ENCRYPTION` | File encryption operation | `2024-03-15 11:00:00 - INFO - ENCRYPTION: File encryption successful` |
-| ❌ ERROR | `DECRYPTION_ERROR` | Decryption failure | `2024-03-15 11:05:00 - ERROR - DECRYPTION_ERROR: Decryption failed. Invalid password` |
-
-### 2.2 User Operation Logs
-**File:** `logs/user_operations.log`  
-**Responsible Class:** `UserManager`
-
-| Level | Event Type | Description | Example Message |
-|:---:|:---|:---|:---|
-| ✅ INFO | `USER_CREATED` | New user creation | `2024-03-15 12:00:00 - INFO - USER_CREATED: New user user@example.com created by admin@example.com` |
-| ✅ INFO | `USER_DELETED` | User deletion | `2024-03-15 12:30:00 - INFO - USER_DELETED: User user@example.com deleted by admin@example.com` |
-| ✅ INFO | `ROLE_CHANGED` | User role modification | `2024-03-15 13:00:00 - INFO - ROLE_CHANGED: Role changed from user to moderator` |
-| ⚠️ WARNING | `LOGIN_ATTEMPT` | Failed login attempt | `2024-03-15 13:30:00 - WARNING - LOGIN_ATTEMPT: Failed login attempt for user@example.com` |
-| ❌ ERROR | `ACCOUNT_LOCKED` | Account lockout | `2024-03-15 14:00:00 - ERROR - ACCOUNT_LOCKED: Account locked due to multiple failed attempts` |
-
-### 2.3 Database Operation Logs
-**File:** `logs/database_operations.log`  
-**Responsible Class:** `DataManager`
-
-| Level | Event Type | Description | Example Message |
-|:---:|:---|:---|:---|
-| ✅ INFO | `SCHEMA_UPDATED` | Schema modification | `2024-03-15 15:00:00 - INFO - SCHEMA_UPDATED: Database schema updated by admin@example.com` |
-| ✅ INFO | `DATA_MODIFIED` | Data modification | `2024-03-15 15:30:00 - INFO - DATA_MODIFIED: Record #123 modified by user@example.com` |
-| ⚠️ WARNING | `CONCURRENT_ACCESS` | Concurrent access warning | `2024-03-15 16:00:00 - WARNING - CONCURRENT_ACCESS: Multiple users accessing same record` |
-| ❌ ERROR | `DATA_ERROR` | Data processing error | `2024-03-15 16:30:00 - ERROR - DATA_ERROR: Failed to process Excel file: Invalid format` |
-
-## 3. Log Levels and Their Meanings 📊
-
-### 3.1 INFO ✅
-- Normal system operations
-- Successful transactions
-- Routine informational messages
-- System state changes
-
-### 3.2 WARNING ⚠️
-- Potential issues
-- Failed login attempts
-- Expired tokens
-- Performance warnings
-- Resource thresholds
-
-### 3.3 ERROR ❌
-- Critical system failures
+### 1. Security Logs (`security.log`)
+- Authentication attempts
+- Session management
+- Permission checks
+- Encryption operations
 - Security violations
-- Data integrity issues
-- System exceptions
-- Authentication failures
-
-## 4. Log Rotation and Management 🔄
-
-### 4.1 Rotation Policy
-```mermaid
-graph TD
-    A[Log File] -->|Reaches 10MB| B[Rotate File]
-    B --> C[Compress Old Log]
-    C --> D[Archive]
-    D --> E[Delete logs > 30 days]
-```
-
-- Maximum file size: 10MB
-- Daily rotation
-- 30-day retention
-- Compressed archiving
-
-### 4.2 Log File Format
-```plaintext
-TIMESTAMP - LEVEL - EVENT_TYPE: MESSAGE
-```
 
 Example:
-```plaintext
-2024-03-15 10:30:15 - INFO - USER_CREATED: New user created: user@example.com
+```
+2024-03-15 14:30:22 - security_manager - WARNING - LOGIN_FAILED: Maximum attempts exceeded for user@example.com
+2024-03-15 14:35:45 - security_manager - INFO - TOKEN_VERIFIED: Session token validated for admin@example.com
 ```
 
-## 5. Log Monitoring and Analysis 📈
+### 2. Database Logs (`database.log`)
+- Data operations
+- Schema changes
+- Query execution
+- Backup operations
+- Configuration updates
 
-### 5.1 Security Monitoring
-- Failed login tracking
-- Token usage patterns
-- Encryption operations
-- Permission changes
+Example:
+```
+2024-03-15 15:20:10 - database_manager - INFO - SCHEMA_UPDATE: Added new column 'status' to users table
+2024-03-15 15:22:30 - database_manager - ERROR - QUERY_FAILED: Invalid SQL syntax in update operation
+```
 
-### 5.2 Performance Monitoring
-- Database operation timing
-- Concurrent access counts
-- Resource utilization
-- Response times
+### 3. User Operation Logs (`user.log`)
+- User creation/deletion
+- Role changes
+- Profile updates
+- Login/logout events
+- Password changes
 
-### 5.3 User Activity Monitoring
-- Session tracking
-- Role modifications
-- Data changes
-- Account management
+Example:
+```
+2024-03-15 16:10:05 - user_manager - INFO - USER_CREATED: New user john.doe@example.com created by admin
+2024-03-15 16:15:22 - user_manager - INFO - ROLE_CHANGED: User role updated from user to moderator
+```
 
-## 6. Log Access Permissions 🔑
+### 4. System Logs (`system.log`)
+- Application startup/shutdown
+- Configuration changes
+- System errors
+- Performance metrics
+- General operations
 
-| Role | Accessible Logs | Permissions | Access Level |
-|:---:|:---|:---|:---:|
-| 👑 Root | All logs | Read, Delete, Archive | ⭐⭐⭐ |
-| 👨‍💼 Admin | User & DB Logs | Read | ⭐⭐ |
-| 👨‍💻 Moderator | Own operation logs | Read Only | ⭐ |
-| 👤 User | None | No Access | ❌ |
+Example:
+```
+2024-03-15 09:00:00 - system - INFO - APPLICATION_START: System initialized successfully
+2024-03-15 09:00:05 - system - INFO - CONFIG_LOADED: Environment variables loaded
+```
 
-## 7. Best Practices 📝
+## Log Structure
 
-### 7.1 Security Best Practices
-- 🔒 Encrypt log files
-- 🎭 Mask sensitive data
-- 🔍 Regular permission audits
-- 🔐 Access control enforcement
+### Standard Log Format
+```
+{timestamp} - {component} - {level} - {event_type}: {details}
+```
 
-### 7.2 Management Best Practices
-- 💾 Regular backups
-- 🧹 Automated cleanup
-- 📊 Periodic analysis
-- 📈 Trend monitoring
+### Components
+- **Timestamp**: UTC time in YYYY-MM-DD HH:MM:SS format
+- **Component**: System component generating the log
+- **Level**: Log severity (INFO, WARNING, ERROR, etc.)
+- **Event Type**: Specific event identifier
+- **Details**: Detailed event information
 
-### 7.3 Debugging Best Practices
-- 🏷️ Unique error codes
-- 📝 Detailed error descriptions
-- 💡 Resolution suggestions
-- 🔍 Context preservation
+### Log Levels
+1. **INFO**: Normal operations
+   - Successful operations
+   - State changes
+   - Regular events
 
-## 8. Example Log Analysis Queries 🔍
+2. **WARNING**: Potential issues
+   - Failed login attempts
+   - Resource limitations
+   - Deprecated features
 
+3. **ERROR**: Operation failures
+   - System errors
+   - Security violations
+   - Data corruption
+
+4. **DEBUG**: Development information
+   - Detailed operation flow
+   - Variable states
+   - Performance metrics
+
+## Configuration
+
+### Log Directory Structure
+```
+logs/
+├── security.log       # Security events
+├── database.log      # Database operations
+├── user.log         # User operations
+└── system.log       # General system events
+```
+
+### Rotation Settings
+- Maximum file size: 10MB
+- Backup count: 5 files
+- Naming pattern: `{log_name}.log.{number}`
+
+Example:
+```
+security.log
+security.log.1
+security.log.2
+security.log.3
+security.log.4
+security.log.5
+```
+
+## Log Rotation
+
+### Rotation Policy
+- Size-based rotation (10MB per file)
+- Keeps 5 backup files
+- Automatic compression of old logs
+- UTC timestamp preservation
+
+### Rotation Process
+1. Current log reaches 10MB
+2. File is renamed to `.log.1`
+3. Previous `.log.1` becomes `.log.2`
+4. Process continues up to `.log.5`
+5. Oldest log is deleted
+
+## Usage Guide
+
+### Basic Logging
 ```python
-# Last 24 hours failed login attempts
-grep "LOGIN_ATTEMPT" logs/user_operations.log | grep "$(date -d '24 hours ago' +'%Y-%m-%d')"
+from core.logging_config import LogConfig
 
-# All actions by specific user
-grep "user@example.com" logs/user_operations.log
+# Security event
+LogConfig.log_security_event("LOGIN_ATTEMPT", "User login successful", "INFO")
 
-# Critical security events
-grep "ERROR" logs/security.log
+# Database event
+LogConfig.log_database_event("QUERY_EXECUTED", "Select operation completed", "INFO")
 
-# Today's schema changes
-grep "SCHEMA_UPDATED" logs/database_operations.log | grep "$(date +'%Y-%m-%d')"
+# User event
+LogConfig.log_user_event("USER_CREATED", "New user account created", "INFO")
 ```
 
-## 9. Log Analysis Tools 🛠️
+### Custom Logger Usage
+```python
+logger = LogConfig.get_logger("custom_component")
+logger.info("Custom operation completed")
+logger.warning("Resource usage high")
+logger.error("Operation failed")
+```
 
-### 9.1 Built-in Tools
-- `grep` for text search
-- `tail -f` for real-time monitoring
-- `awk` for data extraction
-- `sed` for log manipulation
+## Best Practices
+
+### 1. Event Logging
+- Use appropriate log levels
+- Include relevant context
+- Keep messages clear and concise
+- Use consistent event types
+
+### 2. Security Considerations
+- Never log sensitive data
+- Mask personal information
+- Log security events immediately
+- Maintain log file permissions
+
+### 3. Performance
+- Use appropriate log levels
+- Avoid excessive logging
+- Implement log rotation
+- Monitor log file sizes
+
+### 4. Maintenance
+- Regular log review
+- Periodic log cleanup
+- Backup important logs
+- Monitor disk space
+
+## Troubleshooting
+
+### Common Issues
+
+#### 1. Log File Access
+```
+Error: Permission denied accessing log file
+```
+- **Solution**: Check file permissions
+- **Prevention**: Set correct ownership
+
+#### 2. Disk Space
+```
+Error: No space left on device
+```
+- **Solution**: Enable log rotation
+- **Prevention**: Monitor disk usage
+
+#### 3. Missing Logs
+```
+Error: Log file not found
+```
+- **Solution**: Verify log directory
+- **Prevention**: Initialize logging properly
+
+### Resolution Steps
+
+1. **Permission Issues**
+   - Check file ownership
+   - Verify directory permissions
+   - Set correct access rights
+
+2. **Space Issues**
+   - Enable log rotation
+   - Increase rotation frequency
+   - Monitor disk usage
+   - Archive old logs
+
+3. **Configuration Problems**
+   - Verify log paths
+   - Check configuration
+   - Ensure proper initialization

@@ -105,6 +105,10 @@ def clean_and_create_directory_structure():
     # Process directories in order
     directories = [
         'data',
+        'data/security',
+        'data/users',
+        'data/database',
+        'data/config',
         'logs',
         'resources/company'
     ]
@@ -156,6 +160,7 @@ SALT_FILE="data/security/salt.key"
 USERS_FILE="data/users/users.enc"
 SCHEMA_FILE="data/database/schema.enc"
 DATABASE_FILE="data/database/database.enc"
+CONFIG_FILE="data/config/db_config.enc"
 """
         
         with open(".env", "w") as f:
@@ -244,23 +249,73 @@ def initialize_user_database(root_email: str, root_password: str, master_passwor
         log_error(f"Failed to initialize user database: {str(e)}")
         raise
 
+def initialize_database_files(security_manager: SecurityManager, master_password: str) -> None:
+    """Initialize empty database files"""
+    try:
+        log_step("Initializing database files")
+        
+        # Initialize empty schema file
+        schema = {
+            "column_definitions": [],
+            "last_modified": datetime.now(UTC).isoformat(),
+            "modified_by": "system"
+        }
+        encrypted_schema = security_manager.encrypt_file(schema, master_password)
+        with open("data/database/schema.enc", "wb") as f:
+            f.write(encrypted_schema)
+        log_info("Created empty schema file")
+        
+        # Initialize empty database file
+        database = {
+            "data": [],
+            "metadata": {
+                "version": "1.0",
+                "last_updated": datetime.now(UTC).isoformat(),
+                "updated_by": "system",
+                "row_count": 0
+            }
+        }
+        encrypted_database = security_manager.encrypt_file(database, master_password)
+        with open("data/database/database.enc", "wb") as f:
+            f.write(encrypted_database)
+        log_info("Created empty database file")
+        
+        # Initialize database config file
+        config = {
+            "data_file": "data/database/database.enc",
+            "schema_file": "data/database/schema.enc",
+            "master_password": master_password
+        }
+        encrypted_config = security_manager.encrypt_file(config, master_password)
+        with open("data/config/db_config.enc", "wb") as f:
+            f.write(encrypted_config)
+        log_info("Created database config file")
+        
+    except Exception as e:
+        log_error(f"Failed to initialize database files: {str(e)}")
+        raise
+
 def main():
     print("=== Database Project Initialization ===")
     
     try:
-        # Get company and root information with validation
+        # Get initialization information
         log_step("Collecting initialization information")
-        company_name = get_validated_input("Enter company name: ")
+        company_name = input("Enter company name: ")
         root_email = get_validated_input("Enter root email: ", validate_email)
-        root_password = get_validated_input("Enter root password: ", validate_password, True)
-        master_password = get_validated_input("Enter master password for database encryption: ", validate_password, True)
-        copyright_year = get_validated_input("Enter copyright year: ")
+        root_password = get_validated_input("Enter root password: ", is_password=True)
+        master_password = get_validated_input(
+            "Enter master password for database encryption: ",
+            validation_func=lambda p: any(c.isupper() for c in p) or "Password must contain at least one uppercase letter",
+            is_password=True
+        )
+        copyright_year = input("Enter copyright year: ")
         support_email = get_validated_input("Enter support email: ", validate_email)
         
-        # Clean and create directory structure
+        # Create directory structure
         clean_and_create_directory_structure()
         
-        # Create .env file with all required variables
+        # Create .env file
         create_env_file(
             company_name=company_name,
             root_email=root_email,
@@ -272,6 +327,10 @@ def main():
         
         # Initialize user database with root account
         initialize_user_database(root_email, root_password, master_password)
+        
+        # Initialize database files
+        security_manager = SecurityManager(salt_file="data/security/salt.key")
+        initialize_database_files(security_manager, master_password)
         
         # Setup resources
         setup_resources()
@@ -289,8 +348,4 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\nInitialization cancelled.")
-        sys.exit(1) 
+    main() 

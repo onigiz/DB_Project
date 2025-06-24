@@ -11,6 +11,8 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from base64 import b64encode, b64decode
 from enum import Enum, auto
+from .logging_config import LogConfig  # Import LogConfig at the top level
+from dotenv import load_dotenv
 
 class FileOperation(Enum):
     READ = auto()
@@ -127,37 +129,17 @@ class FilePermissions:
         return cls.ROLE_HIERARCHY.get(admin_role, [])
 
 class SecurityManager:
-    def __init__(self, salt_file: str = "salt.key", log_file: str = "security.log"):
+    def __init__(self, salt_file: str = "salt.key"):
         """Initialize SecurityManager with a salt file for key derivation"""
         self.salt_file = salt_file
-        self._setup_logging(log_file)
+        self._setup_logging()
         self._ensure_salt()
         # Load and store salt at initialization
         self._salt = self._load_salt()
         
-    def _setup_logging(self, log_file: str) -> None:
-        """Setup security event logging"""
-        log_dir = os.path.dirname(log_file)
-        if log_dir:
-            os.makedirs(log_dir, exist_ok=True)
-            
-        # Configure logging
-        self.logger = logging.getLogger('security_manager')
-        self.logger.setLevel(logging.INFO)
-        
-        # Create file handler
-        handler = logging.FileHandler(log_file)
-        handler.setLevel(logging.INFO)
-        
-        # Create formatter
-        formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        handler.setFormatter(formatter)
-        
-        # Add handler to logger
-        self.logger.addHandler(handler)
+    def _setup_logging(self) -> None:
+        """Setup security event logging using centralized logging configuration"""
+        self.logger = LogConfig.get_security_logger()
         
     def _log_security_event(self, event_type: str, details: str, level: str = "INFO") -> None:
         """Log security event"""
