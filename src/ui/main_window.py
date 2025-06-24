@@ -16,19 +16,32 @@ Qt.WA_TransparentForMouseEvents = Qt.WidgetAttribute.WA_TransparentForMouseEvent
 Qt.WindowStaysOnTopHint = Qt.WindowType.WindowStaysOnTopHint
 
 class SchemaDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, existing_schema=None):
         super().__init__(parent)
         self.setWindowTitle("Define Schema")
         self.setModal(True)
+        self.existing_schema = existing_schema
         self.init_ui()
         
     def init_ui(self):
         layout = QVBoxLayout(self)
         
+        # Schema name input
+        name_layout = QHBoxLayout()
+        name_label = QLabel("Schema Name:")
+        self.name_input = QLineEdit()
+        name_layout.addWidget(name_label)
+        name_layout.addWidget(self.name_input)
+        layout.addLayout(name_layout)
+        
         # Schema table
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Column Name", "Excel Column", "Data Type"])
+        self.table = QTableWidget(0, 4)  # Added nullable column
+        self.table.setHorizontalHeaderLabels(["Column Name", "Excel Column", "Data Type", "Nullable"])
         layout.addWidget(self.table)
+        
+        # Load existing schema if provided
+        if self.existing_schema:
+            self.load_existing_schema()
         
         # Buttons
         button_layout = QHBoxLayout()
@@ -47,6 +60,35 @@ class SchemaDialog(QDialog):
         button_layout.addWidget(cancel_button)
         layout.addLayout(button_layout)
         
+    def load_existing_schema(self):
+        """Load existing schema into the dialog"""
+        if not self.existing_schema:
+            return
+            
+        self.name_input.setText(self.existing_schema.get("metadata", {}).get("name", ""))
+        
+        for column in self.existing_schema.get("columns", []):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            
+            # Set column name
+            self.table.setItem(row, 0, QTableWidgetItem(column["name"]))
+            
+            # Set Excel column
+            self.table.setItem(row, 1, QTableWidgetItem(column["excel_column"]))
+            
+            # Set data type
+            type_combo = QComboBox()
+            type_combo.addItems(["TEXT", "NUMBER"])
+            type_combo.setCurrentText(column["type"])
+            self.table.setCellWidget(row, 2, type_combo)
+            
+            # Set nullable checkbox
+            nullable_check = QTableWidgetItem()
+            nullable_check.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            nullable_check.setCheckState(Qt.CheckState.Checked if column.get("nullable", False) else Qt.CheckState.Unchecked)
+            self.table.setItem(row, 3, nullable_check)
+        
     def add_row(self):
         row = self.table.rowCount()
         self.table.insertRow(row)
@@ -59,26 +101,39 @@ class SchemaDialog(QDialog):
         
         # Add data type combo box
         type_combo = QComboBox()
-        type_combo.addItems(["string", "number", "date"])
+        type_combo.addItems(["TEXT", "NUMBER"])
         self.table.setCellWidget(row, 2, type_combo)
+        
+        # Add nullable checkbox
+        nullable_check = QTableWidgetItem()
+        nullable_check.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+        nullable_check.setCheckState(Qt.CheckState.Unchecked)
+        self.table.setItem(row, 3, nullable_check)
         
     def remove_row(self):
         current_row = self.table.currentRow()
         if current_row >= 0:
             self.table.removeRow(current_row)
             
+    def get_schema_name(self):
+        """Get the schema name"""
+        return self.name_input.text().strip()
+            
     def get_schema(self):
+        """Get the schema definition"""
         schema = []
         for row in range(self.table.rowCount()):
             name = self.table.item(row, 0).text().strip()
             excel_col = self.table.item(row, 1).text().strip()
             data_type = self.table.cellWidget(row, 2).currentText()
+            nullable = self.table.item(row, 3).checkState() == Qt.CheckState.Checked
             
             if name and excel_col:
                 schema.append({
                     "name": name,
                     "excel_column": excel_col,
-                    "data_type": data_type
+                    "type": data_type,
+                    "nullable": nullable
                 })
         return schema
 
@@ -263,190 +318,404 @@ class MainWindow(QMainWindow):
     
     def show_add_record_dialog(self):
         """Show dialog to add a new record"""
-        if self.user_data['role'] not in ['root', 'admin', 'moderator']:
-            return
+        try:
+            # Get active schema
+            active_schema = self.data_manager.schema_manager.get_active_schema(self.user_token)
+            if not active_schema:
+                QMessageBox.warning(self, "Warning", "Please define and set an active schema first")
+                return
             
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Add Record")
-        dialog.setModal(True)
-        
-        layout = QVBoxLayout(dialog)
-        
-        # Get schema for fields
-        schema = self.data_manager.get_schema()
-        fields = {}
-        
-        for col_def in schema:
-            field_layout = QHBoxLayout()
-            label = QLabel(col_def["name"])
-            field = QLineEdit()
-            field_layout.addWidget(label)
-            field_layout.addWidget(field)
-            layout.addLayout(field_layout)
-            fields[col_def["name"]] = field
-        
-        buttons = QHBoxLayout()
-        save = QPushButton("Save")
-        cancel = QPushButton("Cancel")
-        buttons.addWidget(save)
-        buttons.addWidget(cancel)
-        layout.addLayout(buttons)
-        
-        def handle_save():
-            record_data = {name: field.text() for name, field in fields.items()}
-            success, message = self.data_manager.add_record(self.user_token, record_data)
-            if success:
-                QMessageBox.information(dialog, "Success", message)
-                dialog.accept()
-                self.load_data()
-            else:
-                QMessageBox.warning(dialog, "Error", message)
-        
-        save.clicked.connect(handle_save)
-        cancel.clicked.connect(dialog.reject)
-        
-        dialog.exec()
+            # Create dialog
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Add Record")
+            dialog.setModal(True)
+            
+            # Create layout
+            layout = QVBoxLayout(dialog)
+            
+            # Create form
+            form_layout = QVBoxLayout()
+            fields = {}
+            
+            for column in active_schema["columns"]:
+                field_layout = QHBoxLayout()
+                
+                # Label
+                label = QLabel(f"{column['name']}:")
+                field_layout.addWidget(label)
+                
+                # Input field
+                if column["type"] == "NUMBER":
+                    field = QLineEdit()
+                    field.setPlaceholderText("Enter a number")
+                else:
+                    field = QLineEdit()
+                    field.setPlaceholderText(f"Enter {column['name']}")
+                
+                field_layout.addWidget(field)
+                form_layout.addLayout(field_layout)
+                fields[column["name"]] = field
+            
+            layout.addLayout(form_layout)
+            
+            # Add buttons
+            button_layout = QHBoxLayout()
+            save_button = QPushButton("Save")
+            save_button.clicked.connect(handle_save)
+            cancel_button = QPushButton("Cancel")
+            cancel_button.clicked.connect(dialog.reject)
+            
+            button_layout.addWidget(save_button)
+            button_layout.addWidget(cancel_button)
+            layout.addLayout(button_layout)
+            
+            def handle_save():
+                """Handle saving the new record"""
+                record = {}
+                
+                # Collect values
+                for column in active_schema["columns"]:
+                    value = fields[column["name"]].text().strip()
+                    
+                    # Handle empty values
+                    if not value:
+                        if not column.get("nullable", False):
+                            QMessageBox.warning(
+                                dialog,
+                                "Error",
+                                f"Field {column['name']} cannot be empty"
+                            )
+                            return
+                        record[column["name"]] = None
+                        continue
+                    
+                    # Convert number fields
+                    if column["type"] == "NUMBER":
+                        try:
+                            record[column["name"]] = float(value)
+                        except ValueError:
+                            QMessageBox.warning(
+                                dialog,
+                                "Error",
+                                f"Field {column['name']} must be a number"
+                            )
+                            return
+                    else:
+                        record[column["name"]] = value
+                
+                # Add record
+                success, message = self.data_manager.add_record(self.user_token, record)
+                
+                if success:
+                    dialog.accept()
+                    self.load_data()
+                else:
+                    QMessageBox.warning(dialog, "Error", message)
+            
+            dialog.exec()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred: {str(e)}")
     
     def show_edit_record_dialog(self):
-        """Show dialog to edit selected record"""
-        if self.user_data['role'] not in ['root', 'admin', 'moderator']:
-            return
+        """Show dialog to edit a record"""
+        try:
+            # Get active schema
+            active_schema = self.data_manager.schema_manager.get_active_schema(self.user_token)
+            if not active_schema:
+                QMessageBox.warning(self, "Warning", "Please define and set an active schema first")
+                return
             
-        current_row = self.table.currentRow()
-        if current_row < 0:
-            QMessageBox.warning(self, "Error", "Please select a record to edit")
-            return
-        
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Edit Record")
-        dialog.setModal(True)
-        
-        layout = QVBoxLayout(dialog)
-        
-        # Get schema and current data
-        schema = self.data_manager.get_schema()
-        fields = {}
-        
-        for col_idx, col_def in enumerate(schema):
-            field_layout = QHBoxLayout()
-            label = QLabel(col_def["name"])
-            field = QLineEdit()
-            current_value = self.table.item(current_row, col_idx).text()
-            field.setText(current_value)
-            field_layout.addWidget(label)
-            field_layout.addWidget(field)
-            layout.addLayout(field_layout)
-            fields[col_def["name"]] = field
-        
-        buttons = QHBoxLayout()
-        save = QPushButton("Save")
-        cancel = QPushButton("Cancel")
-        buttons.addWidget(save)
-        buttons.addWidget(cancel)
-        layout.addLayout(buttons)
-        
-        def handle_save():
-            record_data = {name: field.text() for name, field in fields.items()}
-            success, message = self.data_manager.update_record(
-                self.user_token,
-                (self.current_page - 1) * self.page_size + current_row,
-                record_data
-            )
-            if success:
-                QMessageBox.information(dialog, "Success", message)
-                dialog.accept()
-                self.load_data()
-            else:
-                QMessageBox.warning(dialog, "Error", message)
-        
-        save.clicked.connect(handle_save)
-        cancel.clicked.connect(dialog.reject)
-        
-        dialog.exec()
+            # Get selected row
+            current_row = self.table.currentRow()
+            if current_row < 0:
+                QMessageBox.warning(self, "Warning", "Please select a record to edit")
+                return
+            
+            # Create dialog
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Edit Record")
+            dialog.setModal(True)
+            
+            # Create layout
+            layout = QVBoxLayout(dialog)
+            
+            # Create form
+            form_layout = QVBoxLayout()
+            fields = {}
+            
+            for column in active_schema["columns"]:
+                field_layout = QHBoxLayout()
+                
+                # Label
+                label = QLabel(f"{column['name']}:")
+                field_layout.addWidget(label)
+                
+                # Input field
+                if column["type"] == "NUMBER":
+                    field = QLineEdit()
+                    field.setPlaceholderText("Enter a number")
+                else:
+                    field = QLineEdit()
+                    field.setPlaceholderText(f"Enter {column['name']}")
+                
+                # Set current value
+                current_value = self.table.item(current_row, list(fields.keys()).index(column["name"]) if fields else 0)
+                if current_value:
+                    field.setText(current_value.text())
+                
+                field_layout.addWidget(field)
+                form_layout.addLayout(field_layout)
+                fields[column["name"]] = field
+            
+            layout.addLayout(form_layout)
+            
+            # Add buttons
+            button_layout = QHBoxLayout()
+            save_button = QPushButton("Save")
+            save_button.clicked.connect(handle_save)
+            cancel_button = QPushButton("Cancel")
+            cancel_button.clicked.connect(dialog.reject)
+            
+            button_layout.addWidget(save_button)
+            button_layout.addWidget(cancel_button)
+            layout.addLayout(button_layout)
+            
+            def handle_save():
+                """Handle saving the edited record"""
+                record = {}
+                
+                # Collect values
+                for column in active_schema["columns"]:
+                    value = fields[column["name"]].text().strip()
+                    
+                    # Handle empty values
+                    if not value:
+                        if not column.get("nullable", False):
+                            QMessageBox.warning(
+                                dialog,
+                                "Error",
+                                f"Field {column['name']} cannot be empty"
+                            )
+                            return
+                        record[column["name"]] = None
+                        continue
+                    
+                    # Convert number fields
+                    if column["type"] == "NUMBER":
+                        try:
+                            record[column["name"]] = float(value)
+                        except ValueError:
+                            QMessageBox.warning(
+                                dialog,
+                                "Error",
+                                f"Field {column['name']} must be a number"
+                            )
+                            return
+                    else:
+                        record[column["name"]] = value
+                
+                # Update record
+                success, message = self.data_manager.update_record(self.user_token, current_row, record)
+                
+                if success:
+                    dialog.accept()
+                    self.load_data()
+                else:
+                    QMessageBox.warning(dialog, "Error", message)
+            
+            dialog.exec()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred: {str(e)}")
     
     def delete_selected_record(self):
         """Delete selected record"""
-        if self.user_data['role'] not in ['root', 'admin', 'moderator']:
-            return
+        try:
+            # Get active schema
+            active_schema = self.data_manager.schema_manager.get_active_schema(self.user_token)
+            if not active_schema:
+                QMessageBox.warning(self, "Warning", "Please define and set an active schema first")
+                return
             
-        current_row = self.table.currentRow()
-        if current_row < 0:
-            QMessageBox.warning(self, "Error", "Please select a record to delete")
-            return
-        
-        reply = QMessageBox.question(
-            self,
-            "Confirm Delete",
-            "Are you sure you want to delete this record?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            success, message = self.data_manager.delete_record(
-                self.user_token,
-                (self.current_page - 1) * self.page_size + current_row
+            # Get selected row
+            current_row = self.table.currentRow()
+            if current_row < 0:
+                QMessageBox.warning(self, "Warning", "Please select a record to delete")
+                return
+            
+            # Confirm deletion
+            confirm = QMessageBox.question(
+                self,
+                "Confirm Delete",
+                "Are you sure you want to delete this record?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
             )
-            if success:
-                QMessageBox.information(self, "Success", message)
-                self.load_data()
-            else:
-                QMessageBox.warning(self, "Error", message)
+            
+            if confirm == QMessageBox.StandardButton.Yes:
+                success, message = self.data_manager.delete_record(self.user_token, current_row)
+                
+                if success:
+                    self.load_data()
+                else:
+                    QMessageBox.warning(self, "Error", message)
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred: {str(e)}")
     
     def handle_excel_upload(self):
         """Handle Excel file upload"""
-        if self.user_data['role'] not in ['root', 'admin', 'moderator']:
-            return
+        try:
+            # Check if there's an active schema
+            active_schema = self.data_manager.schema_manager.get_active_schema(self.user_token)
+            if not active_schema:
+                QMessageBox.warning(self, "Warning", "Please define and set an active schema first")
+                return
             
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Excel File",
-            "",
-            "Excel Files (*.xlsx *.xls)"
-        )
-        
-        if file_path:
-            success, message = self.data_manager.process_excel(self.user_token, file_path)
-            if success:
-                QMessageBox.information(self, "Success", message)
-                self.load_data()
-            else:
-                QMessageBox.warning(self, "Error", message)
+            # Get Excel file
+            file_name, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select Excel File",
+                "",
+                "Excel Files (*.xlsx *.xls)"
+            )
+            
+            if file_name:
+                # Process Excel file
+                success, message = self.data_manager.process_excel(self.user_token, file_name)
+                
+                if success:
+                    QMessageBox.information(self, "Success", message)
+                    self.load_data()  # Reload data
+                else:
+                    QMessageBox.warning(self, "Error", f"Failed to process Excel file: {message}")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred: {str(e)}")
     
     def handle_schema_definition(self):
         """Handle schema definition"""
-        if self.user_data['role'] not in ['root', 'admin']:
-            return
+        try:
+            # Get list of existing schemas
+            schemas = self.data_manager.schema_manager.list_schemas(self.user_token)
             
-        dialog = SchemaDialog(self)
-        
-        # Load existing schema
-        existing_schema = self.data_manager.get_schema()
-        if existing_schema:
-            for column in existing_schema:
-                dialog.table.insertRow(dialog.table.rowCount())
-                row = dialog.table.rowCount() - 1
-                dialog.table.setItem(row, 0, QTableWidgetItem(column["name"]))
-                dialog.table.setItem(row, 1, QTableWidgetItem(column["excel_column"]))
-                type_combo = dialog.table.cellWidget(row, 2)
-                type_combo.setCurrentText(column["data_type"])
-        
-        if dialog.exec() == QDialog.Accepted:
-            schema = dialog.get_schema()
-            if schema:
-                if self.data_manager.update_schema(self.user_token, schema):
-                    QMessageBox.information(
-                        self,
-                        "Success",
-                        "Schema updated successfully"
+            # Create schema selection dialog
+            schema_select = QDialog(self)
+            schema_select.setWindowTitle("Schema Management")
+            schema_select.setModal(True)
+            
+            layout = QVBoxLayout(schema_select)
+            
+            # Add schema list
+            schema_list = QComboBox()
+            schema_list.addItem("-- Create New Schema --")
+            for schema in schemas:
+                schema_list.addItem(schema["name"])
+            layout.addWidget(schema_list)
+            
+            # Add buttons
+            button_layout = QHBoxLayout()
+            
+            edit_button = QPushButton("Edit/View Schema")
+            edit_button.clicked.connect(lambda: handle_edit_schema(schema_list.currentText()))
+            button_layout.addWidget(edit_button)
+            
+            set_active_button = QPushButton("Set as Active")
+            set_active_button.clicked.connect(lambda: handle_set_active(schema_list.currentText()))
+            button_layout.addWidget(set_active_button)
+            
+            new_button = QPushButton("Create New")
+            new_button.clicked.connect(lambda: handle_new_schema())
+            button_layout.addWidget(new_button)
+            
+            close_button = QPushButton("Close")
+            close_button.clicked.connect(schema_select.close)
+            button_layout.addWidget(close_button)
+            
+            layout.addLayout(button_layout)
+            
+            def handle_edit_schema(schema_name):
+                """Handle editing an existing schema"""
+                if schema_name == "-- Create New Schema --":
+                    handle_new_schema()
+                    return
+                
+                # Get existing schema
+                schema_data = self.data_manager.schema_manager.get_schema(self.user_token, schema_name)
+                if not schema_data:
+                    QMessageBox.warning(self, "Error", "Could not load schema")
+                    return
+                
+                # Show schema dialog with existing data
+                dialog = SchemaDialog(self, schema_data)
+                if dialog.exec():
+                    # Get updated schema
+                    new_schema = dialog.get_schema()
+                    schema_name = dialog.get_schema_name()
+                    
+                    # Update schema
+                    success, message = self.data_manager.schema_manager.create_schema(
+                        self.user_token,
+                        schema_name,
+                        new_schema
                     )
+                    
+                    if success:
+                        QMessageBox.information(self, "Success", "Schema updated successfully")
+                        schema_select.close()
+                    else:
+                        QMessageBox.warning(self, "Error", f"Failed to update schema: {message}")
+            
+            def handle_set_active(schema_name):
+                """Handle setting a schema as active"""
+                if schema_name == "-- Create New Schema --":
+                    QMessageBox.warning(self, "Error", "Please select a valid schema")
+                    return
+                
+                # Set schema as active
+                success, message = self.data_manager.schema_manager.set_active_schema(
+                    self.user_token,
+                    schema_name
+                )
+                
+                if success:
+                    QMessageBox.information(self, "Success", "Active schema updated successfully")
+                    schema_select.close()
+                    # Reload data with new schema
                     self.load_data()
                 else:
-                    QMessageBox.warning(
-                        self,
-                        "Error",
-                        "Failed to update schema"
+                    QMessageBox.warning(self, "Error", f"Failed to set active schema: {message}")
+            
+            def handle_new_schema():
+                """Handle creating a new schema"""
+                dialog = SchemaDialog(self)
+                if dialog.exec():
+                    # Get schema definition
+                    schema = dialog.get_schema()
+                    schema_name = dialog.get_schema_name()
+                    
+                    if not schema_name:
+                        QMessageBox.warning(self, "Error", "Please provide a schema name")
+                        return
+                    
+                    # Create new schema
+                    success, message = self.data_manager.schema_manager.create_schema(
+                        self.user_token,
+                        schema_name,
+                        schema
                     )
+                    
+                    if success:
+                        QMessageBox.information(self, "Success", "Schema created successfully")
+                        schema_select.close()
+                    else:
+                        QMessageBox.warning(self, "Error", f"Failed to create schema: {message}")
+            
+            schema_select.exec()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred: {str(e)}")
     
     def show_user_management(self):
         """Show user management dialog (admin/root only)"""
@@ -1090,41 +1359,54 @@ class MainWindow(QMainWindow):
         dialog.exec()
     
     def load_data(self):
-        """Load data into the table"""
-        result = self.data_manager.get_data(self.current_page, self.page_size)
-        data = result["data"]
-        metadata = result["metadata"]
-        pagination = result["pagination"]
-        
-        if not data:
-            self.table.setRowCount(0)
-            self.table.setColumnCount(0)
-            self.status_bar.showMessage("No data available")
-            return
-        
-        # Get schema for headers
-        schema = self.data_manager.get_schema()
-        headers = [col["name"] for col in schema]
-        
-        # Set up table
-        self.table.setRowCount(len(data))
-        self.table.setColumnCount(len(headers))
-        self.table.setHorizontalHeaderLabels(headers)
-        
-        # Fill data
-        for row, record in enumerate(data):
-            for col, header in enumerate(headers):
-                value = record.get(header, "")
-                self.table.setItem(row, col, QTableWidgetItem(str(value)))
-        
-        # Update status bar
-        self.status_bar.showMessage(
-            f"Showing {len(data)} records (Page {pagination['current_page']} of {pagination['total_pages']})"
-        )
-        
-        # Update navigation buttons
-        self.prev_button.setEnabled(pagination['current_page'] > 1)
-        self.next_button.setEnabled(pagination['current_page'] < pagination['total_pages'])
+        """Load data into table"""
+        try:
+            # Get active schema
+            active_schema = self.data_manager.schema_manager.get_active_schema(self.user_token)
+            if not active_schema:
+                self.table.setColumnCount(0)
+                self.table.setRowCount(0)
+                self.status_bar.showMessage("No active schema defined")
+                return
+            
+            # Get data
+            data = self.data_manager.get_data(self.user_token, self.current_page, self.page_size)
+            
+            # Set up table
+            columns = active_schema["columns"]
+            self.table.setColumnCount(len(columns))
+            self.table.setHorizontalHeaderLabels([col["name"] for col in columns])
+            
+            # Set data
+            records = data["data"]
+            self.table.setRowCount(len(records))
+            
+            for row, record in enumerate(records):
+                for col, column_def in enumerate(columns):
+                    value = record.get(column_def["name"])
+                    # Handle null values
+                    if value is None:
+                        item = QTableWidgetItem("")
+                    else:
+                        item = QTableWidgetItem(str(value))
+                    self.table.setItem(row, col, item)
+            
+            # Update status bar
+            total_records = data["metadata"]["row_count"]
+            total_pages = data["pagination"]["total_pages"]
+            self.status_bar.showMessage(
+                f"Total Records: {total_records} | "
+                f"Page {self.current_page} of {total_pages} | "
+                f"Active Schema: {active_schema['metadata']['name']}"
+            )
+            
+            # Update navigation buttons
+            self.prev_button.setEnabled(self.current_page > 1)
+            self.next_button.setEnabled(self.current_page < total_pages)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load data: {str(e)}")
+            self.status_bar.showMessage("Error loading data")
     
     def previous_page(self):
         """Go to previous page"""

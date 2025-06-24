@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from typing import Optional
 
-from core import SecurityManager, UserManager, DataManager
+from core import SecurityManager, UserManager, DataManager, SchemaManager
 from ui import LoginWindow, MainWindow
 
 def get_env_var(var_name: str) -> str:
@@ -36,6 +36,7 @@ def check_initialization():
     
     required_dirs = [
         'data',
+        'data/schemas',  # Add schemas directory to required dirs
         'logs',
         'resources/company'
     ]
@@ -71,15 +72,15 @@ def main():
     # Get required environment variables
     salt_file = get_env_var('SALT_FILE')
     users_file = get_env_var('USERS_FILE')
-    schema_file = get_env_var('SCHEMA_FILE')
     data_file = get_env_var('DATABASE_FILE')
     
     # Initialize managers
     security_manager = SecurityManager(salt_file=salt_file)
     user_manager = UserManager(security_manager, users_file=users_file)
+    schema_manager = SchemaManager(security_manager)
     data_manager = DataManager(
         security_manager,
-        schema_file=schema_file,
+        schema_manager,
         data_file=data_file
     )
     

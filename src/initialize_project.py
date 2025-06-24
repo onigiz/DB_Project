@@ -9,6 +9,7 @@ import stat
 from datetime import datetime, UTC
 from core.security_manager import SecurityManager
 from core.user_manager import UserManager
+from core.schema_manager import SchemaManager
 
 def log_step(message: str) -> None:
     """Print a step log message"""
@@ -158,7 +159,6 @@ MASTER_PASSWORD="{master_password}"
 # File Paths
 SALT_FILE="data/security/salt.key"
 USERS_FILE="data/users/users.enc"
-SCHEMA_FILE="data/database/schema.enc"
 DATABASE_FILE="data/database/database.enc"
 CONFIG_FILE="data/config/db_config.enc"
 """
@@ -254,16 +254,8 @@ def initialize_database_files(security_manager: SecurityManager, master_password
     try:
         log_step("Initializing database files")
         
-        # Initialize empty schema file
-        schema = {
-            "column_definitions": [],
-            "last_modified": datetime.now(UTC).isoformat(),
-            "modified_by": "system"
-        }
-        encrypted_schema = security_manager.encrypt_file(schema, master_password)
-        with open("data/database/schema.enc", "wb") as f:
-            f.write(encrypted_schema)
-        log_info("Created empty schema file")
+        # Create SchemaManager instance
+        schema_manager = SchemaManager(security_manager)
         
         # Initialize empty database file
         database = {
@@ -283,7 +275,6 @@ def initialize_database_files(security_manager: SecurityManager, master_password
         # Initialize database config file
         config = {
             "data_file": "data/database/database.enc",
-            "schema_file": "data/database/schema.enc",
             "master_password": master_password
         }
         encrypted_config = security_manager.encrypt_file(config, master_password)

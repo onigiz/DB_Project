@@ -2,17 +2,18 @@ import os
 import json
 import pandas as pd
 import logging
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Dict, List, Optional, Tuple
 from .security_manager import SecurityManager, FileOperation, FilePermissions
+from .schema_manager import SchemaManager
 
 class DataManager:
     def __init__(self, security_manager: SecurityManager, 
-                 schema_file: str = "schema.enc",
+                 schema_manager: SchemaManager,
                  data_file: str = "database.enc"):
-        """Initialize DataManager with SecurityManager instance"""
+        """Initialize DataManager with SecurityManager and SchemaManager instances"""
         self.security_manager = security_manager
-        self.schema_file = schema_file
+        self.schema_manager = schema_manager
         self.data_file = data_file
         self.master_password = os.getenv("MASTER_PASSWORD", "default_master_password")
         self.config_file = os.path.join("data", "config", "db_config.enc")
@@ -56,7 +57,6 @@ class DataManager:
                 encrypted_data = f.read()
             config = self.security_manager.decrypt_file(encrypted_data, self.master_password)
             self.data_file = config.get("data_file", self.data_file)
-            self.schema_file = config.get("schema_file", self.schema_file)
             self.master_password = config.get("master_password", self.master_password)
         except (FileNotFoundError, ValueError):
             # If file doesn't exist or is corrupted, create a new one with default values
@@ -69,7 +69,6 @@ class DataManager:
         """Save database configuration"""
         config = {
             "data_file": self.data_file,
-            "schema_file": self.schema_file,
             "master_password": self.master_password
         }
         encrypted_data = self.security_manager.encrypt_file(config, self.master_password)
@@ -87,28 +86,9 @@ class DataManager:
         """Check if user has permission to modify data"""
         return self._check_permission(token, FileOperation.WRITE)
     
-    def _can_modify_schema(self, token: str) -> bool:
-        """Check if user has permission to modify schema"""
-        return self._check_permission(token, FileOperation.SCHEMA_MODIFY)
-    
     def _can_delete_data(self, token: str) -> bool:
         """Check if user has permission to delete data"""
         return self._check_permission(token, FileOperation.DELETE)
-    
-    def _load_schema(self) -> dict:
-        """Load schema from encrypted file"""
-        try:
-            with open(self.schema_file, 'rb') as f:
-                encrypted_data = f.read()
-            return self.security_manager.decrypt_file(encrypted_data, self.master_password)
-        except FileNotFoundError:
-            return {"column_definitions": [], "last_modified": None}
-    
-    def _save_schema(self, schema: dict) -> None:
-        """Save schema to encrypted file"""
-        encrypted_data = self.security_manager.encrypt_file(schema, self.master_password)
-        with open(self.schema_file, 'wb') as f:
-            f.write(encrypted_data)
     
     def _load_data(self) -> dict:
         """Load data from encrypted file"""
@@ -125,37 +105,8 @@ class DataManager:
         with open(self.data_file, 'wb') as f:
             f.write(encrypted_data)
     
-    def update_schema(self, token: str, column_definitions: List[Dict]) -> bool:
-        """Update schema with new column definitions (admin only)"""
-        if not self._can_modify_schema(token):
-            self._log_db_event("SCHEMA_UPDATE_FAILED", "Insufficient permissions", "ERROR")
-            return False
-            
-        try:
-            # Get user email from token
-            token_data = self.security_manager.verify_session_token(token)
-            user_email = token_data["email"]
-            
-            schema = {
-                "column_definitions": column_definitions,
-                "last_modified": datetime.utcnow().isoformat(),
-                "modified_by": user_email
-            }
-            self._save_schema(schema)
-            
-            self._log_db_event("SCHEMA_UPDATED", f"Schema updated by {user_email}")
-            return True
-        except Exception as e:
-            self._log_db_event("SCHEMA_UPDATE_ERROR", str(e), "ERROR")
-            return False
-    
-    def get_schema(self) -> List[Dict]:
-        """Get current schema (all users)"""
-        schema = self._load_schema()
-        return schema.get("column_definitions", [])
-    
     def process_excel(self, token: str, file_path: str) -> Tuple[bool, str]:
-        """Process Excel file according to schema"""
+        """Process Excel file according to active schema"""
         if not self._can_modify_data(token):
             self._log_db_event("EXCEL_PROCESS_FAILED", "Insufficient permissions", "ERROR")
             return False, "Insufficient permissions"
@@ -167,34 +118,79 @@ class DataManager:
             
             self._log_db_event("EXCEL_PROCESSING", f"Starting Excel processing: {file_path}")
             
-            # Load schema
-            schema = self._load_schema()
-            if not schema["column_definitions"]:
-                self._log_db_event("EXCEL_PROCESS_FAILED", "Schema not defined", "ERROR")
-                return False, "Schema not defined"
+            # Load active schema
+            active_schema = self.schema_manager.get_active_schema(token)
+            if not active_schema:
+                self._log_db_event("EXCEL_PROCESS_FAILED", "No active schema defined", "ERROR")
+                return False, "No active schema defined"
             
             # Read Excel file
             df = pd.read_excel(file_path)
             
-            # Validate columns
+            # Validate columns against schema
+            schema_columns = {col["excel_column"] for col in active_schema["columns"]}
             excel_columns = set(df.columns)
-            required_columns = {col_def["excel_column"] for col_def in schema["column_definitions"]}
-            missing_columns = required_columns - excel_columns
+            missing_columns = schema_columns - excel_columns
             if missing_columns:
                 error_msg = f"Missing columns in Excel: {missing_columns}"
                 self._log_db_event("EXCEL_VALIDATION_ERROR", error_msg, "ERROR")
                 return False, error_msg
             
-            self._log_db_event("EXCEL_PROCESSED", f"Excel file processed successfully by {user_email}")
-            return True, "Excel file processed successfully"
+            # Process data according to schema
+            processed_data = []
+            for _, row in df.iterrows():
+                record = {}
+                for col_def in active_schema["columns"]:
+                    excel_col = col_def["excel_column"]
+                    db_col = col_def["name"]
+                    value = row[excel_col]
+                    
+                    # Validate data type
+                    if col_def["type"] == "NUMBER" and not pd.isna(value):
+                        try:
+                            value = float(value)
+                        except ValueError:
+                            return False, f"Invalid number format in column {excel_col}"
+                    
+                    # Handle null values
+                    if pd.isna(value):
+                        if not col_def.get("nullable", False):
+                            return False, f"Null value not allowed in column {excel_col}"
+                        value = None
+                    
+                    record[db_col] = value
+                processed_data.append(record)
+            
+            # Load current database
+            database = self._load_data()
+            
+            # Add new records
+            database["data"].extend(processed_data)
+            
+            # Update metadata
+            database["metadata"].update({
+                "last_updated": datetime.now(UTC).isoformat(),
+                "updated_by": user_email,
+                "row_count": len(database["data"]),
+                "active_schema": active_schema["metadata"]["name"]
+            })
+            
+            # Save updated database
+            self._save_data(database)
+            
+            self._log_db_event(
+                "EXCEL_PROCESSED",
+                f"Excel file processed successfully by {user_email}. Added {len(processed_data)} records."
+            )
+            return True, f"Excel file processed successfully. Added {len(processed_data)} records."
             
         except Exception as e:
             error_msg = f"Error processing Excel file: {str(e)}"
             self._log_db_event("EXCEL_PROCESS_ERROR", error_msg, "ERROR")
             return False, error_msg
     
-    def get_data(self, page: int = 1, page_size: int = 100) -> Dict:
-        """Get data with pagination (all users)"""
+    def get_data(self, token: str, page: int = 1, page_size: int = 100) -> Dict:
+        """Get data with pagination"""
         database = self._load_data()
         data = database["data"]
         
@@ -213,6 +209,64 @@ class DataManager:
             }
         }
     
+    def add_record(self, token: str, record_data: Dict) -> Tuple[bool, str]:
+        """Add a new record to the database"""
+        if not self._can_modify_data(token):
+            return False, "Insufficient permissions"
+            
+        try:
+            # Get user email from token
+            token_data = self.security_manager.verify_session_token(token)
+            user_email = token_data["email"]
+            
+            # Load active schema
+            active_schema = self.schema_manager.get_active_schema(token)
+            if not active_schema:
+                return False, "No active schema defined"
+            
+            # Validate record against schema
+            schema_columns = {col["name"] for col in active_schema["columns"]}
+            record_columns = set(record_data.keys())
+            
+            # Check for missing required fields
+            missing_fields = schema_columns - record_columns
+            if missing_fields:
+                return False, f"Missing required fields: {missing_fields}"
+            
+            # Validate data types and constraints
+            for col_def in active_schema["columns"]:
+                value = record_data.get(col_def["name"])
+                
+                # Check null constraint
+                if value is None and not col_def.get("nullable", False):
+                    return False, f"Null value not allowed in column {col_def['name']}"
+                
+                # Validate data type
+                if value is not None and col_def["type"] == "NUMBER":
+                    try:
+                        record_data[col_def["name"]] = float(value)
+                    except ValueError:
+                        return False, f"Invalid number format in column {col_def['name']}"
+            
+            database = self._load_data()
+            
+            # Add new record
+            database["data"].append(record_data)
+            
+            # Update metadata
+            database["metadata"].update({
+                "last_updated": datetime.now(UTC).isoformat(),
+                "updated_by": user_email,
+                "row_count": len(database["data"]),
+                "active_schema": active_schema["metadata"]["name"]
+            })
+            
+            self._save_data(database)
+            return True, "Record added successfully"
+            
+        except Exception as e:
+            return False, f"Error adding record: {str(e)}"
+    
     def update_record(self, token: str, record_index: int, updated_data: Dict) -> Tuple[bool, str]:
         """Update a specific record in the database"""
         if not self._can_modify_data(token):
@@ -224,18 +278,41 @@ class DataManager:
             token_data = self.security_manager.verify_session_token(token)
             user_email = token_data["email"]
             
+            # Load active schema
+            active_schema = self.schema_manager.get_active_schema(token)
+            if not active_schema:
+                return False, "No active schema defined"
+            
             database = self._load_data()
             if record_index < 0 or record_index >= len(database["data"]):
                 self._log_db_event("RECORD_UPDATE_FAILED", f"Invalid record index: {record_index}", "ERROR")
                 return False, "Invalid record index"
+            
+            # Validate updated data against schema
+            for col_def in active_schema["columns"]:
+                if col_def["name"] in updated_data:
+                    value = updated_data[col_def["name"]]
+                    
+                    # Check null constraint
+                    if value is None and not col_def.get("nullable", False):
+                        return False, f"Null value not allowed in column {col_def['name']}"
+                    
+                    # Validate data type
+                    if value is not None and col_def["type"] == "NUMBER":
+                        try:
+                            updated_data[col_def["name"]] = float(value)
+                        except ValueError:
+                            return False, f"Invalid number format in column {col_def['name']}"
             
             # Update record
             old_data = database["data"][record_index].copy()
             database["data"][record_index].update(updated_data)
             
             # Update metadata
-            database["metadata"]["last_updated"] = datetime.utcnow().isoformat()
-            database["metadata"]["updated_by"] = user_email
+            database["metadata"].update({
+                "last_updated": datetime.now(UTC).isoformat(),
+                "updated_by": user_email
+            })
             
             self._save_data(database)
             
@@ -249,39 +326,6 @@ class DataManager:
             error_msg = f"Error updating record: {str(e)}"
             self._log_db_event("RECORD_UPDATE_ERROR", error_msg, "ERROR")
             return False, error_msg
-    
-    def add_record(self, token: str, record_data: Dict) -> Tuple[bool, str]:
-        """Add a new record to the database (admin/moderator only)"""
-        if not self._can_modify_data(token):
-            return False, "Insufficient permissions"
-            
-        try:
-            # Get user email from token
-            token_data = self.security_manager.verify_session_token(token)
-            user_email = token_data["email"]
-            
-            # Validate record against schema
-            schema = self._load_schema()
-            required_fields = {col_def["name"] for col_def in schema["column_definitions"]}
-            missing_fields = required_fields - set(record_data.keys())
-            if missing_fields:
-                return False, f"Missing required fields: {missing_fields}"
-            
-            database = self._load_data()
-            
-            # Add new record
-            database["data"].append(record_data)
-            
-            # Update metadata
-            database["metadata"]["last_updated"] = datetime.utcnow().isoformat()
-            database["metadata"]["updated_by"] = user_email
-            database["metadata"]["row_count"] = len(database["data"])
-            
-            self._save_data(database)
-            return True, "Record added successfully"
-            
-        except Exception as e:
-            return False, f"Error adding record: {str(e)}"
     
     def delete_record(self, token: str, record_index: int) -> Tuple[bool, str]:
         """Delete a record from the database"""
@@ -306,9 +350,11 @@ class DataManager:
             del database["data"][record_index]
             
             # Update metadata
-            database["metadata"]["last_updated"] = datetime.utcnow().isoformat()
-            database["metadata"]["updated_by"] = user_email
-            database["metadata"]["row_count"] = len(database["data"])
+            database["metadata"].update({
+                "last_updated": datetime.now(UTC).isoformat(),
+                "updated_by": user_email,
+                "row_count": len(database["data"])
+            })
             
             self._save_data(database)
             
@@ -321,51 +367,4 @@ class DataManager:
         except Exception as e:
             error_msg = f"Error deleting record: {str(e)}"
             self._log_db_event("RECORD_DELETE_ERROR", error_msg, "ERROR")
-            return False, error_msg
-    
-    def update_database_config(self, token: str, directory: str, new_password: str) -> Tuple[bool, str]:
-        """Update database location and master password"""
-        token_data = self.security_manager.verify_session_token(token)
-        if not token_data or token_data["role"] not in ["root", "admin"]:
-            return False, "Insufficient permissions"
-            
-        try:
-            # Create directory if it doesn't exist
-            os.makedirs(directory, exist_ok=True)
-            
-            # Define new file paths
-            new_data_file = os.path.join(directory, "database.enc")
-            new_schema_file = os.path.join(directory, "schema.enc")
-            
-            # Load current data with old password
-            current_data = self._load_data()
-            current_schema = self._load_schema()
-            
-            # Update paths and password
-            old_data_file = self.data_file
-            old_schema_file = self.schema_file
-            old_password = self.master_password
-            
-            self.data_file = new_data_file
-            self.schema_file = new_schema_file
-            self.master_password = new_password
-            
-            # Save data with new password
-            self._save_data(current_data)
-            self._save_schema(current_schema)
-            self._save_config()
-            
-            # Delete old files if they exist and are different
-            if os.path.exists(old_data_file) and old_data_file != new_data_file:
-                os.remove(old_data_file)
-            if os.path.exists(old_schema_file) and old_schema_file != new_schema_file:
-                os.remove(old_schema_file)
-            
-            return True, "Database configuration updated successfully"
-        except Exception as e:
-            # Restore old configuration if something goes wrong
-            self.data_file = old_data_file
-            self.schema_file = old_schema_file
-            self.master_password = old_password
-            self._save_config()
-            return False, f"Error updating database configuration: {str(e)}" 
+            return False, error_msg 
